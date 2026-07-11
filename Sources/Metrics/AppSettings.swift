@@ -89,6 +89,9 @@ private struct PersistedSettings: Codable {
     var appearance: AppearanceMode? = nil
     var fanMode: FanMode? = nil
     var desktopWidgets: [CardKind]? = nil
+    /// CardKind.rawValue → ChartWindow.rawValue. Plain string keys keep the
+    /// JSON a normal object (and avoid non-String dictionary-key encoding).
+    var cardChartWindows: [String: String]? = nil
 }
 
 // MARK: - Store
@@ -110,10 +113,21 @@ final class SettingsStore {
     var fanMode: FanMode { didSet { save() } }
     /// Cards floating on the desktop as real-time widgets.
     var desktopWidgets: Set<CardKind> { didSet { save() } }
+    /// Selected history window per live-graph card (CardKind → ChartWindow).
+    var cardChartWindows: [CardKind: ChartWindow] { didSet { save() } }
 
     /// Dashboard cards in display order with hidden ones filtered out.
     var visibleCards: [CardKind] {
         cardOrder.filter { !hiddenCards.contains($0) }
+    }
+
+    /// The chart window a card is showing (defaults to Live).
+    func chartWindow(for kind: CardKind) -> ChartWindow {
+        cardChartWindows[kind] ?? .live
+    }
+
+    func setChartWindow(_ window: ChartWindow, for kind: CardKind) {
+        cardChartWindows[kind] = window
     }
 
     private var loaded = false
@@ -137,6 +151,12 @@ final class SettingsStore {
         appearance = p.appearance ?? .system
         fanMode = p.fanMode ?? .auto
         desktopWidgets = Set(p.desktopWidgets ?? [])
+        cardChartWindows = (p.cardChartWindows ?? [:]).reduce(into: [:]) { result, pair in
+            if let kind = CardKind(rawValue: pair.key),
+               let window = ChartWindow(rawValue: pair.value) {
+                result[kind] = window
+            }
+        }
         loaded = true
     }
 
@@ -149,7 +169,10 @@ final class SettingsStore {
                                   useFahrenheit: useFahrenheit,
                                   appearance: appearance,
                                   fanMode: fanMode,
-                                  desktopWidgets: Array(desktopWidgets))
+                                  desktopWidgets: Array(desktopWidgets),
+                                  cardChartWindows: cardChartWindows.reduce(into: [:]) { result, pair in
+                                      result[pair.key.rawValue] = pair.value.rawValue
+                                  })
         if let data = try? JSONEncoder().encode(p) {
             UserDefaults.standard.set(data, forKey: Self.key)
         }

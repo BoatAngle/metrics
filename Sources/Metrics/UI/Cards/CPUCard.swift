@@ -2,6 +2,7 @@ import SwiftUI
 
 struct CPUCard: View {
     @Environment(MetricsEngine.self) private var engine
+    @Environment(SettingsStore.self) private var settings
 
     var body: some View {
         CardContainer(title: "Processor") {
@@ -16,11 +17,23 @@ struct CPUCard: View {
                     StatRow(label: "Idle", value: Fmt.percent(engine.cpu.idleUsage), dotColor: .gray)
                 }
             }
-            BarHistogram(values: engine.cpuHistory.ordered, capacity: 120, color: .green)
-                .frame(height: 36)
+            ChartWindowPicker(kind: .cpu)
+            chart
             if !engine.cpu.perCore.isEmpty {
                 coreStrip
             }
+        }
+    }
+
+    @ViewBuilder private var chart: some View {
+        if settings.chartWindow(for: .cpu) == .live {
+            BarHistogram(values: engine.cpuHistory.ordered, capacity: 120, color: .green,
+                         valueLabel: { Fmt.percent($0) }, sampleInterval: settings.sampleInterval)
+                .frame(height: 36)
+        } else {
+            HistoryChartView(metric: HistoryMetric.cpu, window: settings.chartWindow(for: .cpu),
+                             color: .green, valueFormat: Fmt.percentValue, yDomain: 0...100)
+                .frame(height: 56)
         }
     }
 

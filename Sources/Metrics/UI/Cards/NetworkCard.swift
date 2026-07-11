@@ -2,6 +2,7 @@ import SwiftUI
 
 struct NetworkCard: View {
     @Environment(MetricsEngine.self) private var engine
+    @Environment(SettingsStore.self) private var settings
 
     // Plain State (not @State): the macro form needs the SwiftUIMacros plugin,
     // which the Command Line Tools toolchain doesn't ship. SwiftUI picks up
@@ -13,12 +14,13 @@ struct NetworkCard: View {
     var body: some View {
         let net = engine.network
         CardContainer(title: "Network Activity", subtitle: subtitle(net)) {
+            ChartWindowPicker(kind: .network)
             trafficRow(icon: "arrow.down", label: "Download",
-                       rate: net.downBytesPerSec,
-                       history: engine.downHistory.ordered, color: .blue)
+                       rate: net.downBytesPerSec, liveHistory: engine.downHistory.ordered,
+                       metric: HistoryMetric.netDown, color: .blue)
             trafficRow(icon: "arrow.up", label: "Upload",
-                       rate: net.upBytesPerSec,
-                       history: engine.upHistory.ordered, color: .orange)
+                       rate: net.upBytesPerSec, liveHistory: engine.upHistory.ordered,
+                       metric: HistoryMetric.netUp, color: .orange)
             Divider()
             VStack(spacing: 5) {
                 if let ssid = net.ssid {
@@ -43,8 +45,9 @@ struct NetworkCard: View {
     }
 
     private func trafficRow(icon: String, label: String, rate: Double,
-                            history: [Double], color: Color) -> some View {
-        HStack(spacing: 10) {
+                            liveHistory: [Double], metric: String, color: Color) -> some View {
+        let window = settings.chartWindow(for: .network)
+        return HStack(spacing: 10) {
             VStack(alignment: .leading, spacing: 1) {
                 HStack(spacing: 3) {
                     Image(systemName: icon)
@@ -59,8 +62,15 @@ struct NetworkCard: View {
                     .monospacedDigit()
             }
             .frame(width: 92, alignment: .leading)
-            Sparkline(values: history, capacity: 120, color: color)
-                .frame(height: 22)
+            if window == .live {
+                Sparkline(values: liveHistory, capacity: 120, color: color,
+                          valueLabel: { Fmt.rate($0) }, sampleInterval: settings.sampleInterval)
+                    .frame(height: 22)
+            } else {
+                HistoryChartView(metric: metric, window: window, color: color,
+                                 valueFormat: { Fmt.rate($0) })
+                    .frame(height: 48)
+            }
         }
     }
 

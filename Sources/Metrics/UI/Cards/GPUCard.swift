@@ -26,9 +26,21 @@ struct GPUCard: View {
                     }
                     .frame(maxWidth: .infinity)
                 }
-                BarHistogram(values: engine.gpuHistory.ordered, capacity: 120, color: .orange)
-                    .frame(height: 36)
+                ChartWindowPicker(kind: .gpu)
+                chart
             }
+        }
+    }
+
+    @ViewBuilder private var chart: some View {
+        if settings.chartWindow(for: .gpu) == .live {
+            BarHistogram(values: engine.gpuHistory.ordered, capacity: 120, color: .orange,
+                         valueLabel: { Fmt.percent($0) }, sampleInterval: settings.sampleInterval)
+                .frame(height: 36)
+        } else {
+            HistoryChartView(metric: HistoryMetric.gpu, window: settings.chartWindow(for: .gpu),
+                             color: .orange, valueFormat: Fmt.percentValue, yDomain: 0...100)
+                .frame(height: 56)
         }
     }
 }

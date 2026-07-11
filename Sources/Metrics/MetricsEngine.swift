@@ -107,6 +107,9 @@ final class MetricsEngine {
     private(set) var memoryHistory = RingBuffer(capacity: 120)
     private(set) var downHistory = RingBuffer(capacity: 120)
     private(set) var upHistory = RingBuffer(capacity: 120)
+    /// Hottest CPU/GPU reading, in °C. Sampled on the sensor cadence (every
+    /// few ticks), so it fills more slowly than the per-tick histories.
+    private(set) var hotspotHistory = RingBuffer(capacity: 120)
 
     /// How often a fresh snapshot is written for the WidgetKit extension.
     private static let widgetPublishInterval: TimeInterval = 30
@@ -148,7 +151,10 @@ final class MetricsEngine {
         }
         if let v = b.disk { disk = v }
         if let v = b.battery { battery = v }
-        if let v = b.sensors { sensors = v }
+        if let v = b.sensors {
+            sensors = v
+            if let hotspot = v.hotspotC { hotspotHistory.append(hotspot) }
+        }
         if let v = b.processes { processes = v }
         if let v = b.bluetooth { bluetooth = v }
         if let v = b.device { device = v }

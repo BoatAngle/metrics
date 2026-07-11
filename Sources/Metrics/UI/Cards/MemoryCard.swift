@@ -2,6 +2,7 @@ import SwiftUI
 
 struct MemoryCard: View {
     @Environment(MetricsEngine.self) private var engine
+    @Environment(SettingsStore.self) private var settings
 
     var body: some View {
         let m = engine.memory
@@ -31,8 +32,20 @@ struct MemoryCard: View {
                     .font(.system(size: 11.5, weight: .medium))
                     .monospacedDigit()
             }
-            BarHistogram(values: engine.memoryHistory.ordered, capacity: 120, color: .indigo)
+            ChartWindowPicker(kind: .memory)
+            chart
+        }
+    }
+
+    @ViewBuilder private var chart: some View {
+        if settings.chartWindow(for: .memory) == .live {
+            BarHistogram(values: engine.memoryHistory.ordered, capacity: 120, color: .indigo,
+                         valueLabel: { Fmt.percent($0) }, sampleInterval: settings.sampleInterval)
                 .frame(height: 24)
+        } else {
+            HistoryChartView(metric: HistoryMetric.memoryUsed, window: settings.chartWindow(for: .memory),
+                             color: .indigo, valueFormat: { Fmt.bytes(UInt64(max(0, $0))) })
+                .frame(height: 56)
         }
     }
 

@@ -12,6 +12,10 @@ enum Fmt {
     /// 0...1 fraction → "37%".
     static func percent(_ fraction: Double) -> String { SharedFmt.percent(fraction) }
 
+    /// Already-scaled percentage value (0...100) → "37%". For history series
+    /// that store percentages directly.
+    static func percentValue(_ value: Double) -> String { String(format: "%.0f%%", value) }
+
     /// "3d 4h 12m" / "4h 12m" / "12m".
     static func uptime(_ seconds: TimeInterval) -> String {
         let total = Int(seconds)
@@ -35,6 +39,18 @@ enum Fmt {
 
     private static func converted(_ celsius: Double, fahrenheit: Bool) -> Double {
         fahrenheit ? celsius * 9 / 5 + 32 : celsius
+    }
+
+    /// Relative age of a past sample: "3s ago" / "5m ago" / "2h ago" / "4d ago".
+    static func ago(_ seconds: TimeInterval) -> String {
+        let s = Int(seconds.rounded())
+        if s <= 0 { return "now" }
+        if s < 60 { return "\(s)s ago" }
+        let m = s / 60
+        if m < 60 { return "\(m)m ago" }
+        let h = m / 60
+        if h < 24 { return "\(h)h ago" }
+        return "\(h / 24)d ago"
     }
 
     private static let mediumDate: DateFormatter = {

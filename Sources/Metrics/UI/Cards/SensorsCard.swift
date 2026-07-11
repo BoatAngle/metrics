@@ -37,6 +37,27 @@ struct SensorsCard: View {
                     }
                 }
             }
+            if s.cpuTempC != nil || s.gpuTempC != nil {
+                Divider()
+                ChartWindowPicker(kind: .sensors)
+                tempChart
+            }
+        }
+    }
+
+    /// Trend of the hottest CPU/GPU sensor — live buffer, or a history series.
+    @ViewBuilder private var tempChart: some View {
+        if settings.chartWindow(for: .sensors) == .live {
+            Sparkline(values: engine.hotspotHistory.ordered, capacity: 120, color: .red,
+                      autoBaseline: true,
+                      valueLabel: { Fmt.temp($0, fahrenheit: settings.useFahrenheit) },
+                      sampleInterval: settings.sampleInterval)
+                .frame(height: 28)
+        } else {
+            HistoryChartView(metric: HistoryMetric.hotspot,
+                             window: settings.chartWindow(for: .sensors), color: .red,
+                             valueFormat: { Fmt.temp($0, fahrenheit: settings.useFahrenheit) })
+                .frame(height: 56)
         }
     }
 
