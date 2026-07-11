@@ -11,6 +11,8 @@ enum DumpRunner {
         let mem = MemorySampler()
         let net = NetworkSampler()
         let disk = DiskSampler()
+        let diskIO = DiskIOSampler()
+        let driveHealth = DriveHealthSampler()
         let battery = BatterySampler()
         let sensors = SensorsSampler()
         let processes = ProcessSampler()
@@ -21,6 +23,7 @@ enum DumpRunner {
         // Prime diff-based samplers, wait, then take the real sample.
         _ = cpu.sample()
         _ = net.sample()
+        _ = diskIO.sample()
         Thread.sleep(forTimeInterval: 1.0)
 
         let c = cpu.sample()
@@ -40,6 +43,23 @@ enum DumpRunner {
         print("\n[Disk] \(d.volumes.count) volume(s)")
         for v in d.volumes {
             print("       \(v.name) (\(v.path))\(v.isRoot ? " [root]" : "")\(v.isRemovable ? " [removable]" : ""): \(Fmt.bytes(v.usedBytes)) / \(Fmt.bytes(v.totalBytes)) (\(Fmt.percent(v.usedFraction)))")
+        }
+
+        let dio = diskIO.sample()
+        print("\n[Disk I/O] read \(rate(dio.readBytesPerSec))  write \(rate(dio.writeBytesPerSec))  (Δread \(Fmt.bytes(dio.deltaReadBytes)), Δwrite \(Fmt.bytes(dio.deltaWriteBytes)))")
+
+        let dh = driveHealth.sample()
+        if dh.drives.isEmpty {
+            print("\n[Drive Health] no SMART/NVMe data available")
+        } else {
+            print("\n[Drive Health] \(dh.drives.count) drive(s)")
+            for drive in dh.drives {
+                print("               \(drive.name) [\(statusName(drive.status))]"
+                    + "  wear \(pct(drive.wearPercent))  spare \(pct(drive.availableSparePercent))"
+                    + "  written \(drive.dataUnitsWrittenBytes.map(Fmt.bytes) ?? "–")"
+                    + "  temp \(opt(drive.temperatureC))°C"
+                    + "  poweredOn \(drive.powerOnHours.map { "\($0)h" } ?? "–")")
+            }
         }
 
         let b = battery.sample()
@@ -93,6 +113,8 @@ enum DumpRunner {
         bundle.memory = m
         bundle.network = n
         bundle.disk = d
+        bundle.diskIO = dio
+        bundle.driveHealth = dh
         bundle.battery = b
         bundle.sensors = s
         HistoryRecorder().record(bundle)
@@ -114,4 +136,13 @@ enum DumpRunner {
 
     private static func rate(_ v: Double) -> String { Fmt.bytes(UInt64(max(0, v))) + "/s" }
     private static func opt(_ v: Double?) -> String { v.map { String(format: "%.2f", $0) } ?? "–" }
+    private static func pct(_ v: Double?) -> String { v.map { String(format: "%.0f%%", $0) } ?? "–" }
+    private static func statusName(_ s: DriveHealthStatus) -> String {
+        switch s {
+        case .ok: return "OK"
+        case .warning: return "WARN"
+        case .failing: return "FAIL"
+        case .unknown: return "?"
+        }
+    }
 }

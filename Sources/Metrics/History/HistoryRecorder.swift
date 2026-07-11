@@ -10,6 +10,8 @@ enum HistoryMetric {
     static let hotspot = "temp.hotspot"             // °C
     static let netDown = "net.down"                 // B/s
     static let netUp = "net.up"                     // B/s
+    static let diskRead = "disk.read"               // B/s
+    static let diskWrite = "disk.write"             // B/s
     static let batteryPercent = "battery.percent"   // %
     static let batteryWatts = "battery.watts"       // W, signed (+ charging)
     static let batteryHealth = "battery.health"     // %
@@ -41,6 +43,10 @@ final class HistoryRecorder {
         if let v = bundle.network {
             samples.append((HistoryMetric.netDown, v.downBytesPerSec))
             samples.append((HistoryMetric.netUp, v.upBytesPerSec))
+        }
+        if let v = bundle.diskIO {
+            samples.append((HistoryMetric.diskRead, v.readBytesPerSec))
+            samples.append((HistoryMetric.diskWrite, v.writeBytesPerSec))
         }
         if let v = bundle.sensors, v.available {
             if let hotspot = v.hotspotC {

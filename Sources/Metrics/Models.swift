@@ -60,6 +60,82 @@ struct DiskSnapshot {
     static let empty = DiskSnapshot()
 }
 
+// MARK: - Disk I/O
+
+/// Live throughput across all physical block-storage drivers, derived by
+/// diffing the IOKit cumulative byte counters between ticks (like NetworkSampler).
+struct DiskIOSnapshot {
+    var readBytesPerSec: Double = 0
+    var writeBytesPerSec: Double = 0
+    var deltaReadBytes: UInt64 = 0    // bytes read since the previous sample
+    var deltaWriteBytes: UInt64 = 0   // bytes written since the previous sample
+    static let empty = DiskIOSnapshot()
+}
+
+// MARK: - Drive health (SMART / NVMe)
+
+enum DriveHealthStatus {
+    case ok       // green
+    case warning  // amber
+    case failing  // red
+    case unknown  // no data
+}
+
+/// Per-drive SMART/NVMe health. All wear/endurance fields are optional so a
+/// drive that only exposes some of them still renders what it has.
+struct DriveHealth: Identifiable {
+    var id: String                       // registry path — stable per drive
+    var name: String
+    var status: DriveHealthStatus
+    var wearPercent: Double? = nil       // NVMe "Percentage Used" (may exceed 100)
+    var availableSparePercent: Double? = nil
+    var temperatureC: Double? = nil
+    var dataUnitsWrittenBytes: UInt64? = nil   // total written (TBW)
+    var powerOnHours: Int? = nil
+    var isNVMe: Bool = true
+}
+
+struct DriveHealthSnapshot {
+    var drives: [DriveHealth] = []
+    static let empty = DriveHealthSnapshot()
+}
+
+// MARK: - Disk-growth forecast
+
+/// Projection of when a volume runs out of free space, from its recorded
+/// free-bytes history. Nothing is claimed until there are ≥3 days of data.
+enum DiskForecast: Equatable {
+    case collecting                  // fewer than 3 days recorded
+    case steady                      // no meaningful downward trend
+    case fillingUp(days: Double)     // free space trending toward zero
+
+    /// Least-squares fit of free-bytes-per-day; only reports `fillingUp` when
+    /// the trend is downward, fits reasonably well (guards against noise), and
+    /// lands inside a useful horizon. `points` are the daily free-byte rollups
+    /// from HistoryStore; `currentFreeBytes` is the live figure to project from.
+    static func compute(points: [HistoryPoint], currentFreeBytes: Double) -> DiskForecast {
+        guard points.count >= 3 else { return .collecting }
+        let t0 = points[0].date.timeIntervalSince1970
+        let xs = points.map { ($0.date.timeIntervalSince1970 - t0) / 86400 }  // days
+        let ys = points.map(\.avg)                                            // free bytes
+        let n = Double(xs.count)
+        let meanX = xs.reduce(0, +) / n
+        let meanY = ys.reduce(0, +) / n
+        var sxx = 0.0, sxy = 0.0, syy = 0.0
+        for i in xs.indices {
+            let dx = xs[i] - meanX, dy = ys[i] - meanY
+            sxx += dx * dx; sxy += dx * dy; syy += dy * dy
+        }
+        guard sxx > 0 else { return .steady }
+        let slope = sxy / sxx                       // bytes/day (negative = filling up)
+        let r2 = syy > 0 ? (sxy * sxy) / (sxx * syy) : 0
+        guard slope < 0, r2 >= 0.6 else { return .steady }
+        let days = currentFreeBytes / -slope
+        guard days.isFinite, days > 0, days < 3650 else { return .steady }
+        return .fillingUp(days: days)
+    }
+}
+
 // MARK: - Network
 
 enum ConnectionType: String {

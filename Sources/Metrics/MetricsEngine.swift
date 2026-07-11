@@ -9,6 +9,8 @@ struct SampleBundle {
     var memory: MemorySnapshot?
     var network: NetworkSnapshot?
     var disk: DiskSnapshot?
+    var diskIO: DiskIOSnapshot?
+    var driveHealth: DriveHealthSnapshot?
     var battery: BatterySnapshot?
     var sensors: SensorsSnapshot?
     var processes: ProcessesSnapshot?
@@ -30,6 +32,8 @@ final class SamplerLoop {
     private let memorySampler = MemorySampler()
     private let networkSampler = NetworkSampler()
     private let diskSampler = DiskSampler()
+    private let diskIOSampler = DiskIOSampler()
+    private let driveHealthSampler = DriveHealthSampler()
     private let batterySampler = BatterySampler()
     private let sensorsSampler = SensorsSampler()
     private let processSampler = ProcessSampler()
@@ -61,9 +65,13 @@ final class SamplerLoop {
         let net = networkSampler.sample()
         bundle.network = net
         dataStore.accumulate(down: net.deltaDownBytes, up: net.deltaUpBytes)
+        // Disk throughput is diff-based, so it must be read every tick to keep
+        // the live read/write sparklines flowing.
+        bundle.diskIO = diskIOSampler.sample()
 
         if tick % 5 == 0 {
             bundle.disk = diskSampler.sample()
+            bundle.driveHealth = driveHealthSampler.sample()
             bundle.battery = batterySampler.sample()
             bundle.sensors = sensorsSampler.sample()
         }
@@ -95,6 +103,8 @@ final class MetricsEngine {
     private(set) var memory = MemorySnapshot.empty
     private(set) var network = NetworkSnapshot.empty
     private(set) var disk = DiskSnapshot.empty
+    private(set) var diskIO = DiskIOSnapshot.empty
+    private(set) var driveHealth = DriveHealthSnapshot.empty
     private(set) var battery = BatterySnapshot.empty
     private(set) var sensors = SensorsSnapshot.empty
     private(set) var processes = ProcessesSnapshot.empty
@@ -107,6 +117,8 @@ final class MetricsEngine {
     private(set) var memoryHistory = RingBuffer(capacity: 120)
     private(set) var downHistory = RingBuffer(capacity: 120)
     private(set) var upHistory = RingBuffer(capacity: 120)
+    private(set) var diskReadHistory = RingBuffer(capacity: 120)
+    private(set) var diskWriteHistory = RingBuffer(capacity: 120)
     /// Hottest CPU/GPU reading, in °C. Sampled on the sensor cadence (every
     /// few ticks), so it fills more slowly than the per-tick histories.
     private(set) var hotspotHistory = RingBuffer(capacity: 120)
@@ -150,6 +162,12 @@ final class MetricsEngine {
             upHistory.append(v.upBytesPerSec)
         }
         if let v = b.disk { disk = v }
+        if let v = b.diskIO {
+            diskIO = v
+            diskReadHistory.append(v.readBytesPerSec)
+            diskWriteHistory.append(v.writeBytesPerSec)
+        }
+        if let v = b.driveHealth { driveHealth = v }
         if let v = b.battery { battery = v }
         if let v = b.sensors {
             sensors = v

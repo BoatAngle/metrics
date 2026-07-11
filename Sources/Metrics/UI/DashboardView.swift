@@ -248,7 +248,7 @@ private extension CardKind {
         case .cpu: return 230
         case .gpu: return 200
         case .memory: return 230
-        case .disk: return 150
+        case .disk: return 300
         case .network: return 210
         case .networkData: return 130
         case .battery: return 250
