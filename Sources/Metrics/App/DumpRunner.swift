@@ -184,10 +184,69 @@ enum DumpRunner {
         }
         sem.wait()
 
+        dumpAnalytics(device: dev, network: n, memory: m, power: pw, sensors: s, store: store)
         dumpAlerts(sensors: s)
 
         print("\nDone.")
     }
+
+    /// Session stats (#25), records (#26), weekly summary (#30/#31) and export
+    /// (#32). The history reads run on the store queue, so the semaphore wait
+    /// here (on the main thread) never deadlocks. Diagnostics (#10) are
+    /// main-actor and engine-driven, so they're exercised from the UI, not here.
+    private static func dumpAnalytics(device dev: DeviceSnapshot, network n: NetworkSnapshot,
+                                      memory m: MemorySnapshot, power pw: PowerSnapshot,
+                                      sensors s: SensorsSnapshot, store: NetworkDataStore) {
+        // Records live on a main-actor store; DumpRunner runs on the main thread.
+        MainActor.assumeIsolated {
+            let r = RecordsStore.shared
+            r.record(sensors: s, fans: s.fans, network: n, memory: m, power: pw)
+            print("\n[Records] all-time:")
+            printRecord("hottest sensor", r.allTime.hottestSensor) { String(format: "%.1f°C", $0) }
+            printRecord("peak fan", r.allTime.peakFanRPM) { "\(Int($0)) rpm" }
+            printRecord("peak network", r.allTime.peakNetworkBurst) { rate($0) }
+            printRecord("lowest free mem", r.allTime.lowestFreeMemory) { Fmt.bytes(UInt64(max(0, $0))) }
+            printRecord("peak power", r.allTime.peakPowerWatts) { Fmt.watts($0) }
+        }
+
+        let daily = store.snapshot().daily
+        let boot = dev.bootDate ?? Date().addingTimeInterval(-3600)
+        let sem = DispatchSemaphore(value: 0)
+        Task {
+            let session = await SessionStats.load(since: boot)
+            let weekly = await WeeklySummary.load(days: 7, networkDaily: daily)
+            let metrics = await HistoryStore.shared.distinctMetrics()
+
+            print("\n[Session] since boot \(Fmt.date(boot)):")
+            print("          CPU avg \(pct(session.avgCPU)) peak \(pct(session.peakCPU))  "
+                + "GPU avg \(pct(session.avgGPU)) peak \(pct(session.peakGPU))")
+            print("          hotspot avg \(optC(session.avgHotspot)) peak \(optC(session.peakHotspot))  "
+                + "net ↓\(optBytes(session.netDownBytes)) ↑\(optBytes(session.netUpBytes))")
+
+            let hot = weekly.hottestDay?.peakC.map { String(format: "%.0f°C", $0) } ?? "–"
+            print("\n[This Week] \(weekly.days.count) day cells  hottest \(hot)  data \(Fmt.bytes(weekly.totalDataBytes))"
+                + "  battery \(String(format: "%.1fh", weekly.hoursOnBattery)) / plugged \(String(format: "%.1fh", weekly.hoursPlugged))")
+
+            print("\n[Export] \(metrics.count) distinct metric(s): \(metrics.prefix(12).joined(separator: ", "))"
+                + (metrics.count > 12 ? " …" : ""))
+            let csv = await HistoryExport.build(metrics: Array(metrics.prefix(2)), range: .day, format: .csv)
+            print("          sample CSV: \(csv.split(separator: "\n").count) line(s)")
+            sem.signal()
+        }
+        sem.wait()
+    }
+
+    private static func printRecord(_ name: String, _ e: RecordsStore.Entry?,
+                                    format: (Double) -> String) {
+        if let e {
+            print("          \(name): \(format(e.value))  (\(e.label), \(Fmt.date(e.date)))")
+        } else {
+            print("          \(name): –")
+        }
+    }
+
+    private static func optC(_ v: Double?) -> String { v.map { String(format: "%.0f°C", $0) } ?? "–" }
+    private static func optBytes(_ v: Double?) -> String { v.map { Fmt.bytes(UInt64(max(0, $0))) } ?? "–" }
 
     /// Alerts dry-run (features #15–#23): load the persisted rules, show the
     /// quiet-hours/DND config, and print each rule with its threshold. No

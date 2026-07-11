@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import Observation
 
@@ -124,6 +125,12 @@ final class MetricsEngine {
     /// Live connectivity + outage log (feature #9).
     private(set) var connectivity = ConnectivitySnapshot.empty
 
+    /// Most recent wake from sleep, for since-wake session stats (feature #25).
+    /// Seeded at launch (we can't know a prior wake) and advanced on every
+    /// NSWorkspace wake notification.
+    private(set) var lastWakeDate = Date()
+    @ObservationIgnored private var wakeObserver: NSObjectProtocol?
+
     private(set) var cpuHistory = RingBuffer(capacity: 120)
     private(set) var gpuHistory = RingBuffer(capacity: 120)
     private(set) var powerHistory = RingBuffer(capacity: 120)
@@ -167,11 +174,22 @@ final class MetricsEngine {
         connectivityMonitor.start { [weak self] snapshot in
             Task { @MainActor in self?.connectivity = snapshot }
         }
+        // Track wake-from-sleep for since-wake session stats (feature #25).
+        if wakeObserver == nil {
+            wakeObserver = NSWorkspace.shared.notificationCenter.addObserver(
+                forName: NSWorkspace.didWakeNotification, object: nil, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated { self?.lastWakeDate = Date() }
+            }
+        }
     }
 
     func stopMonitors() {
         networkAppMonitor.stop()
         connectivityMonitor.stop()
+        if let wakeObserver {
+            NSWorkspace.shared.notificationCenter.removeObserver(wakeObserver)
+            self.wakeObserver = nil
+        }
     }
 
     private func apply(_ b: SampleBundle) {
@@ -222,6 +240,11 @@ final class MetricsEngine {
         // Evaluate alert rules against the freshly applied snapshots (features
         // #15–#23). Cheap: a few comparisons per enabled rule.
         AlertEngine.shared.evaluate(from: self)
+
+        // Fold current readings into the persisted records (feature #26). Only
+        // a genuinely new personal-best touches disk.
+        RecordsStore.shared.record(sensors: sensors, fans: sensors.fans, network: network,
+                                   memory: memory, power: power)
 
         if Date().timeIntervalSince(lastWidgetPublish) >= Self.widgetPublishInterval {
             lastWidgetPublish = Date()

@@ -40,6 +40,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var statusController: StatusItemController?
     private var settingsWindow: NSWindow?
     private var dashboardWindow: NSWindow?
+    private var weeklyWindow: NSWindow?
 
     /// Install the `metrics://` GetURL Apple Event handler early, before the
     /// initial open-URL event that a launch-by-URL delivers. FourCC literals
@@ -100,6 +101,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             let appearance = SettingsStore.shared.appearance.nsAppearance
             self.settingsWindow?.appearance = appearance
             self.dashboardWindow?.appearance = appearance
+            self.weeklyWindow?.appearance = appearance
         }
     }
 
@@ -164,7 +166,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     func showDashboard() {
         if dashboardWindow == nil {
-            let root = DashboardWindowView(openSettings: { [weak self] in self?.showSettings() })
+            let root = DashboardWindowView(
+                openSettings: { [weak self] in self?.showSettings() },
+                openWeekly: { [weak self] in self?.showWeeklySummary() })
                 .environment(MetricsEngine.shared)
                 .environment(SettingsStore.shared)
                 .environment(DashboardNavigator.shared)
@@ -197,6 +201,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     func windowWillClose(_ notification: Notification) {
         guard (notification.object as? NSWindow) === dashboardWindow else { return }
         NSApp.setActivationPolicy(.accessory)
+    }
+
+    // MARK: - This Week window (features #30/#31)
+
+    func showWeeklySummary() {
+        if weeklyWindow == nil {
+            let root = WeeklySummaryView()
+                .environment(MetricsEngine.shared)
+                .environment(SettingsStore.shared)
+            let hosting = NSHostingController(rootView: AnyView(root))
+            let window = NSWindow(contentViewController: hosting)
+            window.title = "This Week"
+            window.styleMask = [.titled, .closable, .miniaturizable, .resizable]
+            window.setContentSize(NSSize(width: 760, height: 680))
+            window.contentMinSize = NSSize(width: 640, height: 560)
+            window.isReleasedWhenClosed = false
+            window.center()
+            window.setFrameAutosaveName("MetricsThisWeek.v1")
+            weeklyWindow = window
+        }
+        weeklyWindow?.appearance = SettingsStore.shared.appearance.nsAppearance
+        NSApp.setActivationPolicy(.regular)
+        NSApp.activate(ignoringOtherApps: true)
+        weeklyWindow?.makeKeyAndOrderFront(nil)
     }
 
     // MARK: - Settings window

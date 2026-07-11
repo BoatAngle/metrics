@@ -16,6 +16,7 @@ enum HistoryMetric {
     static let diskWrite = "disk.write"             // B/s
     static let batteryPercent = "battery.percent"   // %
     static let batteryWatts = "battery.watts"       // W, signed (+ charging)
+    static let batteryPlugged = "battery.plugged"   // 1 while on AC power, else 0
     static let batteryHealth = "battery.health"     // %
     static let batteryCycles = "battery.cycles"     // count
 
@@ -71,6 +72,9 @@ final class HistoryRecorder {
         if let v = bundle.battery, v.hasBattery {
             samples.append((HistoryMetric.batteryPercent, v.percent))
             if let watts = v.watts { samples.append((HistoryMetric.batteryWatts, watts)) }
+            // Charging-state history: the weekly summary integrates this 0/1
+            // series into hours on battery vs plugged in (feature #30).
+            samples.append((HistoryMetric.batteryPlugged, v.isPluggedIn ? 1 : 0))
             // Health & cycles: one point per day is all the timeline needs.
             let today = Calendar.current.startOfDay(for: Date())
             if lastHealthDay != today {

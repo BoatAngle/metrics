@@ -4,6 +4,18 @@ struct SensorsCard: View {
     @Environment(MetricsEngine.self) private var engine
     @Environment(SettingsStore.self) private var settings
 
+    private enum RecordScope: String, CaseIterable, Identifiable {
+        case today, allTime
+        var id: String { rawValue }
+        var title: String { self == .today ? "Today" : "All-time" }
+    }
+
+    // Plain State (not @State): the macro form needs the SwiftUIMacros plugin,
+    // which the Command Line Tools toolchain doesn't ship.
+    private var recordsExpanded = State(initialValue: false)
+    private var recordScope = State(initialValue: RecordScope.allTime)
+    private var confirmingReset = State(initialValue: false)
+
     private let gridColumns = [GridItem(.flexible()), GridItem(.flexible())]
 
     var body: some View {
@@ -41,6 +53,85 @@ struct SensorsCard: View {
                 Divider()
                 ChartWindowPicker(kind: .sensors)
                 tempChart
+            }
+            Divider()
+            recordsSection
+        }
+    }
+
+    // MARK: - Records (feature #26)
+
+    private var recordsSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            CardDisclosureHeader(title: "Records", expanded: recordsExpanded.wrappedValue) {
+                recordsExpanded.wrappedValue.toggle()
+            }
+            if recordsExpanded.wrappedValue {
+                Picker("", selection: recordScope.projectedValue) {
+                    ForEach(RecordScope.allCases) { Text($0.title).tag($0) }
+                }
+                .pickerStyle(.segmented)
+                .controlSize(.mini)
+                .labelsHidden()
+
+                let store = RecordsStore.shared
+                let set = recordScope.wrappedValue == .today ? store.today : store.allTime
+                VStack(spacing: 6) {
+                    recordRow("Hottest sensor", set.hottestSensor) {
+                        Fmt.temp($0, fahrenheit: settings.useFahrenheit)
+                    }
+                    recordRow("Peak fan speed", set.peakFanRPM) { "\(Int($0.rounded())) rpm" }
+                    recordRow("Peak network", set.peakNetworkBurst) { Fmt.rate($0) }
+                    recordRow("Lowest free memory", set.lowestFreeMemory) { Fmt.bytes(UInt64(max(0, $0))) }
+                    recordRow("Peak power draw", set.peakPowerWatts) { Fmt.watts($0) }
+                }
+                resetRow
+            }
+        }
+    }
+
+    private func recordRow(_ title: String, _ entry: RecordsStore.Entry?,
+                           format: (Double) -> String) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Text(title)
+                .font(.system(size: 11.5))
+                .foregroundStyle(.secondary)
+            Spacer(minLength: 8)
+            if let entry {
+                VStack(alignment: .trailing, spacing: 0) {
+                    Text(format(entry.value))
+                        .font(.system(size: 11.5, weight: .medium))
+                        .monospacedDigit()
+                    Text("\(entry.label) · \(Fmt.ago(Date().timeIntervalSince(entry.date)))")
+                        .font(.system(size: 9.5))
+                        .foregroundStyle(.tertiary)
+                }
+            } else {
+                Text("—")
+                    .font(.system(size: 11.5, weight: .medium))
+                    .foregroundStyle(.tertiary)
+            }
+        }
+    }
+
+    private var resetRow: some View {
+        HStack {
+            Spacer()
+            if recordScope.wrappedValue == .today {
+                CardPushButton(title: "Reset today") {
+                    RecordsStore.shared.resetToday()
+                }
+            } else if confirmingReset.wrappedValue {
+                CardPushButton(title: "Confirm reset", prominent: true) {
+                    RecordsStore.shared.resetAllTime()
+                    confirmingReset.wrappedValue = false
+                }
+            } else {
+                CardPushButton(title: "Reset all-time") {
+                    confirmingReset.wrappedValue = true
+                    let box = confirmingReset
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 4) { box.wrappedValue = false }
+                }
             }
         }
     }

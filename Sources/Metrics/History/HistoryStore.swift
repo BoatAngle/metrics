@@ -10,6 +10,19 @@ struct HistoryPoint: Equatable, Sendable {
     var max: Double
 }
 
+/// Summary statistics for a metric over an arbitrary time range (feature #25).
+/// `total` integrates the stored value across time (Σ avg × bucketSeconds), so
+/// for a rate metric (B/s) it is the total transferred over the range in bytes.
+struct HistoryAggregate: Sendable {
+    var avg: Double         // count-weighted mean of the stored value
+    var min: Double
+    var max: Double
+    var count: Int          // number of raw samples represented
+    var total: Double       // time-integral of the value (bytes for a rate metric)
+    var firstDate: Date
+    var lastDate: Date
+}
+
 /// `sqlite3_bind_text` needs SQLITE_TRANSIENT so SQLite copies the string;
 /// the C macro doesn't import into Swift, so recreate it.
 private let SQLITE_TRANSIENT = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
@@ -126,6 +139,55 @@ final class HistoryStore: @unchecked Sendable {
             default:
                 return rollupSeries(metric: metric, resolution: Resolution.day, since: start)
             }
+        }
+    }
+
+    /// Summary stats for a metric over `[start, end]`, at the same
+    /// resolution `series` would pick for the range (feature #25). nil when the
+    /// range holds no recorded samples for the metric.
+    func aggregate(metric: String, since start: Date, until end: Date = Date()) async -> HistoryAggregate? {
+        await onQueue { [self] in
+            aggregateSync(metric: metric,
+                          start: start.timeIntervalSince1970,
+                          end: end.timeIntervalSince1970)
+        }
+    }
+
+    /// One aggregated point per local calendar day over the trailing `days`,
+    /// built from the per-hour rollups grouped into the viewer's timezone
+    /// (features #30/#31). `max` is that day's peak, `avg` its mean. Newest
+    /// last. Hour rollups are retained ~90 days, so this covers week and month.
+    func localDailyRollups(metric: String, days: Int, endingAt end: Date = Date()) async -> [HistoryPoint] {
+        await onQueue { [self] in
+            let tz = Double(TimeZone.current.secondsFromGMT(for: end))
+            let start = end.timeIntervalSince1970 - Double(max(days, 1)) * 86400
+            return queryPoints("""
+                SELECT CAST((bucket + ?3) / 86400 AS INTEGER) * 86400 - ?3 AS day,
+                       SUM(avg * count) / SUM(count), MIN(min), MAX(max)
+                FROM rollups
+                WHERE metric = ?1 AND resolution = \(Resolution.hour) AND bucket >= ?2
+                GROUP BY day ORDER BY day
+                """) { stmt in
+                sqlite3_bind_text(stmt, 1, metric, -1, SQLITE_TRANSIENT)
+                sqlite3_bind_double(stmt, 2, start)
+                sqlite3_bind_double(stmt, 3, tz)
+            }
+        }
+    }
+
+    /// Every metric name that has recorded data, for the export series picker
+    /// (feature #32). Sorted; drawn from rollups (the durable store).
+    func distinctMetrics() async -> [String] {
+        await onQueue { [self] in
+            var stmt: OpaquePointer?
+            guard sqlite3_prepare_v2(db, "SELECT DISTINCT metric FROM rollups ORDER BY metric",
+                                     -1, &stmt, nil) == SQLITE_OK, let stmt else { return [] }
+            defer { sqlite3_finalize(stmt) }
+            var names: [String] = []
+            while sqlite3_step(stmt) == SQLITE_ROW {
+                if let c = sqlite3_column_text(stmt, 0) { names.append(String(cString: c)) }
+            }
+            return names
         }
     }
 
@@ -305,6 +367,99 @@ final class HistoryStore: @unchecked Sendable {
             sqlite3_bind_int(stmt, 2, Int32(resolution))
             sqlite3_bind_double(stmt, 3, start)
             sqlite3_bind_double(stmt, 4, end)
+        }
+    }
+
+    /// Running fold of bucketed rows into aggregate statistics.
+    private struct AggAcc {
+        var sumAvgCount = 0.0
+        var sumCount = 0.0
+        var minV = Double.greatestFiniteMagnitude
+        var maxV = -Double.greatestFiniteMagnitude
+        var integral = 0.0
+        var firstBucket = Double.greatestFiniteMagnitude
+        var lastEdge = -Double.greatestFiniteMagnitude
+    }
+
+    /// Aggregates a metric over `[start, end)` at the same resolution `series`
+    /// would use, mirroring its raw-tail handling so short windows stay current
+    /// to the second. Buckets contribute `avg × bucketSeconds` to the integral.
+    private func aggregateSync(metric: String, start: TimeInterval, end: TimeInterval) -> HistoryAggregate? {
+        var acc = AggAcc()
+        let window = end - start
+        switch window {
+        case ...(2 * 3600):
+            // Minute rollups up to the raw retention edge, raw samples grouped
+            // by minute after it — the same split `series` uses.
+            let safeRawStart = bucketFloor(Date().timeIntervalSince1970 - Self.rawRetention,
+                                           Resolution.minute) + Double(Resolution.minute)
+            foldRollups(metric: metric, resolution: Resolution.minute,
+                        start: start, end: Swift.min(end, safeRawStart), into: &acc)
+            foldRawByMinute(metric: metric,
+                            start: Swift.max(start, safeRawStart), end: end, into: &acc)
+        case ...(26 * 3600):
+            foldRollups(metric: metric, resolution: Resolution.minute, start: start, end: end, into: &acc)
+        case ...(8 * 86400):
+            foldRollups(metric: metric, resolution: Resolution.hour, start: start, end: end, into: &acc)
+        default:
+            foldRollups(metric: metric, resolution: Resolution.day, start: start, end: end, into: &acc)
+        }
+        guard acc.sumCount > 0 else { return nil }
+        return HistoryAggregate(avg: acc.sumAvgCount / acc.sumCount,
+                                min: acc.minV, max: acc.maxV, count: Int(acc.sumCount),
+                                total: acc.integral,
+                                firstDate: Date(timeIntervalSince1970: acc.firstBucket),
+                                lastDate: Date(timeIntervalSince1970: acc.lastEdge))
+    }
+
+    private func foldRollups(metric: String, resolution: Int,
+                             start: TimeInterval, end: TimeInterval, into acc: inout AggAcc) {
+        guard end > start else { return }
+        foldBuckets("""
+            SELECT bucket, avg, min, max, count FROM rollups
+            WHERE metric = ?1 AND resolution = ?2 AND bucket >= ?3 AND bucket < ?4
+            """, bucketSeconds: Double(resolution), into: &acc) { stmt in
+            sqlite3_bind_text(stmt, 1, metric, -1, SQLITE_TRANSIENT)
+            sqlite3_bind_int(stmt, 2, Int32(resolution))
+            sqlite3_bind_double(stmt, 3, start)
+            sqlite3_bind_double(stmt, 4, end)
+        }
+    }
+
+    private func foldRawByMinute(metric: String, start: TimeInterval, end: TimeInterval,
+                                 into acc: inout AggAcc) {
+        guard end > start else { return }
+        foldBuckets("""
+            SELECT CAST(ts / \(Resolution.minute) AS INTEGER) * \(Resolution.minute) AS bucket,
+                   AVG(value), MIN(value), MAX(value), COUNT(*)
+            FROM samples WHERE metric = ?1 AND ts >= ?2 AND ts < ?3 GROUP BY bucket
+            """, bucketSeconds: Double(Resolution.minute), into: &acc) { stmt in
+            sqlite3_bind_text(stmt, 1, metric, -1, SQLITE_TRANSIENT)
+            sqlite3_bind_double(stmt, 2, start)
+            sqlite3_bind_double(stmt, 3, end)
+        }
+    }
+
+    /// Folds rows shaped (bucket, avg, min, max, count) into `acc`.
+    private func foldBuckets(_ sql: String, bucketSeconds: Double,
+                             into acc: inout AggAcc, bind: (OpaquePointer) -> Void) {
+        var stmt: OpaquePointer?
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK, let stmt else { return }
+        defer { sqlite3_finalize(stmt) }
+        bind(stmt)
+        while sqlite3_step(stmt) == SQLITE_ROW {
+            let bucket = sqlite3_column_double(stmt, 0)
+            let avg = sqlite3_column_double(stmt, 1)
+            let mn = sqlite3_column_double(stmt, 2)
+            let mx = sqlite3_column_double(stmt, 3)
+            let count = Double(sqlite3_column_int64(stmt, 4))
+            acc.sumAvgCount += avg * count
+            acc.sumCount += count
+            acc.minV = Swift.min(acc.minV, mn)
+            acc.maxV = Swift.max(acc.maxV, mx)
+            acc.integral += avg * bucketSeconds
+            acc.firstBucket = Swift.min(acc.firstBucket, bucket)
+            acc.lastEdge = Swift.max(acc.lastEdge, bucket + bucketSeconds)
         }
     }
 

@@ -1,4 +1,6 @@
+import AppKit
 import SwiftUI
+import UniformTypeIdentifiers
 
 /// Settings window content: seven tabs of standard Form controls.
 struct SettingsView: View {
@@ -328,14 +330,26 @@ struct SettingsView: View {
 
 // MARK: - Data
 
-/// History-database section: size on disk, retention policy, delete-all.
+/// History-database section: size, export (feature #32), diagnostics
+/// (feature #10), retention policy, delete-all.
 private struct DataSettingsTab: View {
+    @Environment(MetricsEngine.self) private var engine
+    @Environment(SettingsStore.self) private var settings
+
     // Plain State (not @State): the macro form needs the SwiftUIMacros plugin,
     // which the Command Line Tools toolchain doesn't ship. SwiftUI picks up
     // stored DynamicProperty values by reflection, so this behaves the same.
     private var dbSizeBytes = State(initialValue: UInt64?.none)
     private var confirmingDelete = State(initialValue: false)
     private var deleting = State(initialValue: false)
+
+    private var availableMetrics = State(initialValue: [String]())
+    private var selectedMetrics = State(initialValue: Set<String>())
+    private var exportRange = State(initialValue: HistoryExport.Range.week)
+    private var exportFormat = State(initialValue: HistoryExport.Format.csv)
+    private var exporting = State(initialValue: false)
+    private var exportMessage = State(initialValue: String?.none)
+    private var showingDiagnostics = State(initialValue: false)
 
     var body: some View {
         Form {
@@ -353,6 +367,17 @@ private struct DataSettingsTab: View {
             } footer: {
                 Text("Metrics records CPU, GPU, memory, temperature, fan, network, disk and battery history locally — nothing leaves this Mac. Raw samples are kept for 2 hours, per-minute summaries for 7 days, per-hour summaries for 90 days, and daily summaries forever.")
             }
+
+            exportSection
+
+            Section {
+                Button("Run Diagnostics…") { showingDiagnostics.wrappedValue = true }
+            } header: {
+                Text("Diagnostics")
+            } footer: {
+                Text("Checks fans, sensors, battery, disk SMART status, recent abnormal shutdowns and the fan helper, with a plain-language verdict for each.")
+            }
+
             Section {
                 Button("Delete All History…", role: .destructive) {
                     confirmingDelete.wrappedValue = true
@@ -363,7 +388,12 @@ private struct DataSettingsTab: View {
             }
         }
         .formStyle(.grouped)
-        .onAppear { refreshSize() }
+        .onAppear { refreshSize(); loadMetrics() }
+        .sheet(isPresented: showingDiagnostics.projectedValue) {
+            DiagnosticsView { showingDiagnostics.wrappedValue = false }
+                .environment(engine)
+                .environment(settings)
+        }
         .confirmationDialog("Delete all recorded history?",
                             isPresented: confirmingDelete.projectedValue,
                             titleVisibility: .visible) {
@@ -371,6 +401,97 @@ private struct DataSettingsTab: View {
             Button("Cancel", role: .cancel) {}
         } message: {
             Text("Every recorded sample and summary will be removed. This cannot be undone.")
+        }
+    }
+
+    // MARK: - Export (feature #32)
+
+    private var exportSection: some View {
+        Section {
+            if availableMetrics.wrappedValue.isEmpty {
+                Text("No history recorded yet.")
+                    .foregroundStyle(.secondary)
+            } else {
+                DisclosureGroup("Series (\(selectedMetrics.wrappedValue.count) of \(availableMetrics.wrappedValue.count))") {
+                    HStack {
+                        Button("Select all") {
+                            selectedMetrics.wrappedValue = Set(availableMetrics.wrappedValue)
+                        }
+                        Button("None") { selectedMetrics.wrappedValue = [] }
+                    }
+                    .buttonStyle(.borderless)
+                    .controlSize(.small)
+                    ForEach(availableMetrics.wrappedValue, id: \.self) { metric in
+                        Toggle(HistoryExport.label(for: metric), isOn: metricBinding(metric))
+                    }
+                }
+                Picker("Date range", selection: exportRange.projectedValue) {
+                    ForEach(HistoryExport.Range.allCases) { Text($0.title).tag($0) }
+                }
+                Picker("Format", selection: exportFormat.projectedValue) {
+                    ForEach(HistoryExport.Format.allCases) { Text($0.title).tag($0) }
+                }
+                HStack {
+                    Button("Export Selected…") { export(everything: false) }
+                        .disabled(selectedMetrics.wrappedValue.isEmpty || exporting.wrappedValue)
+                    Button("Export Everything…") { export(everything: true) }
+                        .disabled(exporting.wrappedValue)
+                }
+                if let msg = exportMessage.wrappedValue {
+                    Text(msg).font(.caption).foregroundStyle(.secondary)
+                }
+            }
+        } header: {
+            Text("Export")
+        } footer: {
+            Text("Writes the chosen series to a CSV or JSON file. “Export Everything” saves every recorded series over the full retention window in one file.")
+        }
+    }
+
+    private func metricBinding(_ metric: String) -> Binding<Bool> {
+        Binding(
+            get: { selectedMetrics.wrappedValue.contains(metric) },
+            set: { on in
+                if on { selectedMetrics.wrappedValue.insert(metric) }
+                else { selectedMetrics.wrappedValue.remove(metric) }
+            }
+        )
+    }
+
+    private func loadMetrics() {
+        Task { @MainActor in
+            let metrics = await HistoryStore.shared.distinctMetrics()
+            availableMetrics.wrappedValue = metrics
+            if selectedMetrics.wrappedValue.isEmpty {
+                selectedMetrics.wrappedValue = Set(metrics)   // default: all
+            }
+        }
+    }
+
+    private func export(everything: Bool) {
+        let format = exportFormat.wrappedValue
+        let range: HistoryExport.Range = everything ? .all : exportRange.wrappedValue
+        let metrics = everything ? availableMetrics.wrappedValue : Array(selectedMetrics.wrappedValue)
+        guard !metrics.isEmpty else { return }
+
+        let panel = NSSavePanel()
+        panel.nameFieldStringValue = "metrics-\(everything ? "all" : "export").\(format.fileExtension)"
+        panel.allowedContentTypes = [format == .csv ? .commaSeparatedText : .json]
+        panel.canCreateDirectories = true
+        // The user drives the panel and picks the destination — a first-party save.
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+
+        exporting.wrappedValue = true
+        exportMessage.wrappedValue = "Exporting…"
+        Task { @MainActor in
+            let content = await HistoryExport.build(metrics: metrics, range: range, format: format)
+            do {
+                try content.write(to: url, atomically: true, encoding: .utf8)
+                exportMessage.wrappedValue = "Saved \(url.lastPathComponent)."
+            } catch {
+                exportMessage.wrappedValue = "Export failed: \(error.localizedDescription)"
+            }
+            exporting.wrappedValue = false
         }
     }
 
@@ -385,6 +506,8 @@ private struct DataSettingsTab: View {
         Task { @MainActor in
             await HistoryStore.shared.deleteAllHistory()
             dbSizeBytes.wrappedValue = await HistoryStore.shared.databaseSizeBytes()
+            availableMetrics.wrappedValue = []
+            selectedMetrics.wrappedValue = []
             deleting.wrappedValue = false
         }
     }

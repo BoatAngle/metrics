@@ -159,6 +159,7 @@ struct DashboardWindowView: View {
     @Environment(SettingsStore.self) private var settings
     @Environment(DashboardNavigator.self) private var navigator
     var openSettings: () -> Void
+    var openWeekly: () -> Void
 
     // Plain State (not @State): the macro form needs the SwiftUIMacros plugin,
     // which the Command Line Tools toolchain doesn't ship. SwiftUI picks up
@@ -204,6 +205,10 @@ struct DashboardWindowView: View {
                     .foregroundStyle(.secondary)
             }
             Spacer()
+            Button(action: openWeekly) {
+                Label("This Week", systemImage: "calendar")
+            }
+            .controlSize(.small)
             Button(action: openSettings) {
                 Label("Settings", systemImage: "gearshape")
             }
@@ -264,11 +269,11 @@ private extension CardKind {
         case .network: return 340
         case .networkData: return 190
         case .battery: return 310
-        case .sensors: return 230
+        case .sensors: return 260
         case .fans: return 200
         case .processes: return 220
         case .bluetooth: return 90
-        case .device: return 170
+        case .device: return 340
         }
     }
 }

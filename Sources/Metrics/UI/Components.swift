@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 // MARK: - Card container
@@ -244,6 +245,102 @@ struct StatRow: View {
                 .font(.system(size: 11.5, weight: .medium))
                 .monospacedDigit()
         }
+    }
+}
+
+// MARK: - AppKit card controls (shared)
+
+/// A bordered AppKit push button usable inside a dashboard card. A SwiftUI
+/// `Button` there is dead — the card's `.onDrag` reorder gesture eats its taps —
+/// so clicks are handled at the AppKit layer instead. `prominent` gives the
+/// accent-tinted call-to-action look.
+struct CardPushButton: NSViewRepresentable {
+    var title: String
+    var systemImage: String? = nil
+    var prominent: Bool = false
+    var enabled: Bool = true
+    var action: () -> Void
+
+    func makeNSView(context: Context) -> NSButton {
+        let button = NSButton(title: title, target: context.coordinator,
+                              action: #selector(Coordinator.fire))
+        button.bezelStyle = .rounded
+        button.controlSize = .small
+        button.font = .systemFont(ofSize: 11)
+        button.setContentHuggingPriority(.required, for: .horizontal)
+        apply(to: button)
+        return button
+    }
+
+    func updateNSView(_ nsView: NSButton, context: Context) {
+        context.coordinator.action = action
+        apply(to: nsView)
+    }
+
+    private func apply(to button: NSButton) {
+        button.title = title
+        button.isEnabled = enabled
+        button.bezelColor = prominent ? .controlAccentColor : nil
+        if let systemImage {
+            button.image = NSImage(systemSymbolName: systemImage, accessibilityDescription: title)
+            button.imagePosition = .imageLeading
+        } else {
+            button.image = nil
+            button.imagePosition = .noImage
+        }
+    }
+
+    func makeCoordinator() -> Coordinator { Coordinator(action: action) }
+
+    final class Coordinator: NSObject {
+        var action: () -> Void
+        init(action: @escaping () -> Void) { self.action = action }
+        @objc func fire() { action() }
+    }
+}
+
+/// A borderless AppKit chevron+label header that toggles a card section open.
+/// NSButton for the same drag-gesture reason as `CardPushButton`.
+struct CardDisclosureHeader: NSViewRepresentable {
+    var title: String
+    var expanded: Bool
+    var action: () -> Void
+
+    func makeNSView(context: Context) -> NSButton {
+        let button = NSButton()
+        button.isBordered = false
+        button.bezelStyle = .inline
+        button.imagePosition = .imageLeading
+        button.alignment = .left
+        button.contentTintColor = .secondaryLabelColor
+        button.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 9, weight: .semibold)
+        button.target = context.coordinator
+        button.action = #selector(Coordinator.fire)
+        button.setContentHuggingPriority(.required, for: .horizontal)
+        apply(to: button)
+        return button
+    }
+
+    func updateNSView(_ nsView: NSButton, context: Context) {
+        context.coordinator.action = action
+        apply(to: nsView)
+    }
+
+    private func apply(to button: NSButton) {
+        button.image = NSImage(systemSymbolName: expanded ? "chevron.down" : "chevron.right",
+                               accessibilityDescription: nil)
+        button.attributedTitle = NSAttributedString(string: "  " + title, attributes: [
+            .font: NSFont.systemFont(ofSize: 10.5, weight: .semibold),
+            .foregroundColor: NSColor.secondaryLabelColor,
+        ])
+    }
+
+    func makeCoordinator() -> Coordinator { Coordinator(action: action) }
+
+    final class Coordinator: NSObject {
+        var action: () -> Void
+        init(action: @escaping () -> Void) { self.action = action }
+        @objc func fire() { action() }
     }
 }
 
