@@ -470,18 +470,73 @@ struct SensorsSnapshot {
 
 // MARK: - Processes
 
+/// Which per-process column a Processes card row is ranked/labelled by
+/// (feature #13). Persisted via SettingsStore. `gpu` is only offered when the
+/// hardware actually maps GPU utilization to owning pids.
+enum ProcessSortKey: String, CaseIterable, Identifiable {
+    case cpu, memory, disk, energy, gpu
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .cpu: return "CPU"
+        case .memory: return "Memory"
+        case .disk: return "Disk"
+        case .energy: return "Energy"
+        case .gpu: return "GPU"
+        }
+    }
+}
+
 struct ProcessSample: Identifiable {
     var pid: Int32
     var name: String
     var cpuPercent: Double
     var memoryBytes: UInt64
+    /// Live disk throughput from proc_pid_rusage byte-counter deltas (feature
+    /// #13). 0 for processes we can't read rusage for (e.g. other users).
+    var diskReadBytesPerSec: Double = 0
+    var diskWriteBytesPerSec: Double = 0
+    /// Average power attributed to the task over the sampling window, derived
+    /// from the `ri_energy_nj` counter delta. 0 when unreadable.
+    var energyWatts: Double = 0
+    /// Per-process GPU utilization (0…100), nil when the platform doesn't
+    /// expose it (the common case on Apple Silicon).
+    var gpuPercent: Double? = nil
     var id: Int32 { pid }
+
+    var diskBytesPerSec: Double { diskReadBytesPerSec + diskWriteBytesPerSec }
+
+    /// The value shown/ranked for a given sort column.
+    func metric(for key: ProcessSortKey) -> Double {
+        switch key {
+        case .cpu: return cpuPercent
+        case .memory: return Double(memoryBytes)
+        case .disk: return diskBytesPerSec
+        case .energy: return energyWatts
+        case .gpu: return gpuPercent ?? 0
+        }
+    }
 }
 
 struct ProcessesSnapshot {
-    var topCPU: [ProcessSample] = []
-    var topMemory: [ProcessSample] = []
+    /// Bounded working set: the union of the top rows across every sort column,
+    /// each fully populated, so the card can rank by any column with correct
+    /// top-N results without carrying the whole process table.
+    var processes: [ProcessSample] = []
+    /// True when at least one process reported a real per-pid GPU figure.
+    var gpuAvailable: Bool = false
     static let empty = ProcessesSnapshot()
+
+    /// Processes ranked (descending) by the given column.
+    func ranked(by key: ProcessSortKey) -> [ProcessSample] {
+        processes.sorted { $0.metric(for: key) > $1.metric(for: key) }
+    }
+
+    /// Convenience accessors kept for headless/legacy readers.
+    var topCPU: [ProcessSample] { ranked(by: .cpu) }
+    var topMemory: [ProcessSample] { ranked(by: .memory) }
 }
 
 // MARK: - Bluetooth

@@ -28,6 +28,7 @@ enum DumpRunner {
         _ = mem.sample()
         _ = net.sample()
         _ = diskIO.sample()
+        _ = processes.sample()   // per-pid disk/energy are rate-based too
         Thread.sleep(forTimeInterval: 1.0)
 
         let c = cpu.sample()
@@ -138,10 +139,11 @@ enum DumpRunner {
         }
 
         let p = processes.sample()
-        print("\n[Processes] top CPU:")
-        for proc in p.topCPU.prefix(5) { print("            \(proc.name) — \(String(format: "%.1f%%", proc.cpuPercent)), \(Fmt.bytes(proc.memoryBytes))") }
-        print("            top memory:")
-        for proc in p.topMemory.prefix(5) { print("            \(proc.name) — \(Fmt.bytes(proc.memoryBytes)), \(String(format: "%.1f%%", proc.cpuPercent))") }
+        print("\n[Processes] GPU-per-pid: \(p.gpuAvailable ? "available" : "unavailable (no per-client pid mapping on this GPU)")")
+        for key in ProcessSortKey.allCases where key != .gpu || p.gpuAvailable {
+            print("            top \(key.title):")
+            for proc in p.ranked(by: key).prefix(5) { print("            " + procLine(proc, gpu: p.gpuAvailable)) }
+        }
 
         let bt = bluetooth.sample()
         print("\n[Bluetooth] \(bt.count) device(s) with battery info")
@@ -183,6 +185,16 @@ enum DumpRunner {
         sem.wait()
 
         print("\nDone.")
+    }
+
+    /// One process row with all per-pid columns (feature #13).
+    private static func procLine(_ p: ProcessSample, gpu: Bool) -> String {
+        var s = "\(p.name) [\(p.pid)] — cpu \(String(format: "%.1f%%", p.cpuPercent))"
+            + "  mem \(Fmt.bytes(p.memoryBytes))"
+            + "  disk \(rate(p.diskReadBytesPerSec + p.diskWriteBytesPerSec))"
+            + "  energy \(Fmt.watts(p.energyWatts))"
+        if gpu { s += "  gpu \(String(format: "%.0f%%", p.gpuPercent ?? 0))" }
+        return s
     }
 
     private static func rate(_ v: Double) -> String { Fmt.bytes(UInt64(max(0, v))) + "/s" }

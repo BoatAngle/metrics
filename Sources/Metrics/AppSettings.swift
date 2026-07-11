@@ -97,6 +97,8 @@ private struct PersistedSettings: Codable {
     /// resets on, and an optional data cap in GB (nil = no cap).
     var billingCycleStartDay: Int? = nil
     var monthlyDataCapGB: Double? = nil
+    /// Processes card sort column (feature #13), stored as ProcessSortKey.rawValue.
+    var processSortKey: String? = nil
 }
 
 // MARK: - Store
@@ -124,6 +126,8 @@ final class SettingsStore {
     var billingCycleStartDay: Int { didSet { save() } }
     /// Optional monthly data cap in GB (nil = no cap).
     var monthlyDataCapGB: Double? { didSet { save() } }
+    /// Which column the Processes card ranks by (feature #13).
+    var processSortKey: ProcessSortKey { didSet { save() } }
 
     /// Dashboard cards in display order with hidden ones filtered out.
     var visibleCards: [CardKind] {
@@ -168,6 +172,7 @@ final class SettingsStore {
         }
         billingCycleStartDay = min(max(p.billingCycleStartDay ?? 1, 1), 31)
         monthlyDataCapGB = p.monthlyDataCapGB.map { max(0, $0) }
+        processSortKey = p.processSortKey.flatMap { ProcessSortKey(rawValue: $0) } ?? .cpu
         loaded = true
     }
 
@@ -185,7 +190,8 @@ final class SettingsStore {
                                       result[pair.key.rawValue] = pair.value.rawValue
                                   },
                                   billingCycleStartDay: billingCycleStartDay,
-                                  monthlyDataCapGB: monthlyDataCapGB)
+                                  monthlyDataCapGB: monthlyDataCapGB,
+                                  processSortKey: processSortKey.rawValue)
         if let data = try? JSONEncoder().encode(p) {
             UserDefaults.standard.set(data, forKey: Self.key)
         }
