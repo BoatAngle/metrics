@@ -6,6 +6,7 @@ import Observation
 struct SampleBundle {
     var cpu: CPUSnapshot?
     var gpu: GPUSnapshot?
+    var power: PowerSnapshot?
     var memory: MemorySnapshot?
     var network: NetworkSnapshot?
     var disk: DiskSnapshot?
@@ -29,6 +30,7 @@ final class SamplerLoop {
 
     private let cpuSampler = CPUSampler()
     private let gpuSampler = GPUSampler()
+    private let powerSampler = PowerSampler()
     private let memorySampler = MemorySampler()
     private let networkSampler = NetworkSampler()
     private let diskSampler = DiskSampler()
@@ -61,6 +63,7 @@ final class SamplerLoop {
         var bundle = SampleBundle()
         bundle.cpu = cpuSampler.sample()
         bundle.gpu = gpuSampler.sample()
+        bundle.power = powerSampler.sample()
         bundle.memory = memorySampler.sample()
         let net = networkSampler.sample()
         bundle.network = net
@@ -100,6 +103,7 @@ final class MetricsEngine {
 
     private(set) var cpu = CPUSnapshot.empty
     private(set) var gpu = GPUSnapshot.empty
+    private(set) var power = PowerSnapshot.empty
     private(set) var memory = MemorySnapshot.empty
     private(set) var network = NetworkSnapshot.empty
     private(set) var disk = DiskSnapshot.empty
@@ -114,6 +118,7 @@ final class MetricsEngine {
 
     private(set) var cpuHistory = RingBuffer(capacity: 120)
     private(set) var gpuHistory = RingBuffer(capacity: 120)
+    private(set) var powerHistory = RingBuffer(capacity: 120)
     private(set) var memoryHistory = RingBuffer(capacity: 120)
     private(set) var downHistory = RingBuffer(capacity: 120)
     private(set) var upHistory = RingBuffer(capacity: 120)
@@ -151,6 +156,10 @@ final class MetricsEngine {
         if let v = b.gpu {
             gpu = v
             gpuHistory.append(v.usageFraction)
+        }
+        if let v = b.power {
+            power = v
+            powerHistory.append(v.totalWatts)
         }
         if let v = b.memory {
             memory = v

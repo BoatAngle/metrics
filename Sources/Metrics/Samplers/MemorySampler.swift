@@ -6,6 +6,9 @@ final class MemorySampler {
 
     private let pageSize: UInt64
     private let totalBytes: UInt64
+    /// Lifetime swap-page counters from the previous sample, for rate diffs.
+    private var previousSwap: (ins: UInt64, outs: UInt64)?
+    private var previousTime: DispatchTime?
 
     init() {
         var size: vm_size_t = 0
@@ -59,6 +62,23 @@ final class MemorySampler {
             snapshot.swapTotalBytes = swap.xsu_total
         }
 
+        // Swap-in/out throughput: diff the lifetime page counters (pages moved
+        // via the compressor's swap segments) against the previous sample.
+        let now = DispatchTime.now()
+        let ins = UInt64(stats.swapins)
+        let outs = UInt64(stats.swapouts)
+        if let prev = previousSwap, let prevTime = previousTime {
+            let elapsed = Double(now.uptimeNanoseconds &- prevTime.uptimeNanoseconds) / 1_000_000_000
+            if elapsed > 0 {
+                let dIn = ins >= prev.ins ? ins - prev.ins : 0
+                let dOut = outs >= prev.outs ? outs - prev.outs : 0
+                snapshot.swapInBytesPerSec = Double(dIn) * Double(pageSize) / elapsed
+                snapshot.swapOutBytesPerSec = Double(dOut) * Double(pageSize) / elapsed
+            }
+        }
+        previousSwap = (ins, outs)
+        previousTime = now
+
         // kern.memorystatus_level reports the percentage of memory still
         // considered available; pressure is its complement.
         var level: Int32 = 0
@@ -68,6 +88,14 @@ final class MemorySampler {
         } else {
             let pressed = Double(snapshot.wiredBytes + snapshot.compressedBytes)
             snapshot.pressurePercent = min(max(pressed / Double(totalBytes) * 100, 0), 100)
+        }
+
+        // Discrete VM-pressure level (normal / warn / critical) straight from
+        // the kernel — the same signal a memory-pressure dispatch source fires.
+        var pressureRaw: Int32 = 0
+        var pressureLen = MemoryLayout<Int32>.size
+        if sysctlbyname("kern.memorystatus_vm_pressure_level", &pressureRaw, &pressureLen, nil, 0) == 0 {
+            snapshot.pressureLevel = MemoryPressureLevel(raw: pressureRaw)
         }
         return snapshot
     }

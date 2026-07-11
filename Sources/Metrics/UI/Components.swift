@@ -5,11 +5,15 @@ import SwiftUI
 struct CardContainer<Content: View>: View {
     let title: String
     var subtitle: String? = nil
+    /// Optional trailing badge shown beside the subtitle (e.g. the memory
+    /// pressure dot). AnyView keeps the container non-generic over it so every
+    /// existing call site compiles unchanged.
+    var titleAccessory: AnyView? = nil
     @ViewBuilder var content: Content
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            HStack(alignment: .firstTextBaseline) {
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
                 Text(title)
                     .font(.system(size: 12, weight: .semibold))
                     .foregroundStyle(.secondary)
@@ -18,6 +22,9 @@ struct CardContainer<Content: View>: View {
                     Text(subtitle)
                         .font(.system(size: 11))
                         .foregroundStyle(.tertiary)
+                }
+                if let titleAccessory {
+                    titleAccessory
                 }
             }
             content

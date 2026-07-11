@@ -8,6 +8,7 @@ enum DumpRunner {
         print("Metrics sampler dump —", Date())
 
         let cpu = CPUSampler()
+        let power = PowerSampler()
         let mem = MemorySampler()
         let net = NetworkSampler()
         let disk = DiskSampler()
@@ -22,6 +23,8 @@ enum DumpRunner {
 
         // Prime diff-based samplers, wait, then take the real sample.
         _ = cpu.sample()
+        _ = power.sample()
+        _ = mem.sample()
         _ = net.sample()
         _ = diskIO.sample()
         Thread.sleep(forTimeInterval: 1.0)
@@ -29,11 +32,38 @@ enum DumpRunner {
         let c = cpu.sample()
         print("\n[CPU] total \(Fmt.percent(c.totalUsage))  user \(Fmt.percent(c.userUsage))  system \(Fmt.percent(c.systemUsage))  idle \(Fmt.percent(c.idleUsage))")
         print("      cores(\(c.perCore.count)): \(c.perCore.map(Fmt.percent).joined(separator: " "))")
+        if c.clusters.isEmpty {
+            print("      clusters: (perflevel split unavailable)")
+        } else {
+            for cluster in c.clusters {
+                let loads = cluster.range.map { Fmt.percent(c.perCore[$0]) }.joined(separator: " ")
+                print("      [\(cluster.shortName)] \(cluster.name) (\(cluster.coreCount) cores): \(loads)")
+            }
+        }
+
+        let pw = power.sample()
+        if pw.available {
+            print("\n[Power] source \(pw.source.rawValue)  total \(Fmt.watts(pw.totalWatts))")
+            print("        CPU \(Fmt.watts(pw.cpuWatts))\(pw.cpuDerived ? " (est.)" : "")  GPU \(Fmt.watts(pw.gpuWatts))"
+                + "  ANE \(pw.aneWatts.map(Fmt.watts) ?? "–")  DRAM \(pw.dramWatts.map(Fmt.watts) ?? "–")"
+                + "  adapter \(pw.adapterWatts.map(Fmt.watts) ?? "–")")
+            if pw.clusterFreqs.isEmpty {
+                print("        cluster clocks: (unavailable)")
+            } else {
+                let freqs = pw.clusterFreqs.map {
+                    "\($0.name) \($0.megahertz < 1 ? "idle" : Fmt.frequency($0.megahertz)) @ \(String(format: "%.0f%%", $0.activePercent)) active"
+                }.joined(separator: "  ")
+                print("        clocks: \(freqs)")
+            }
+        } else {
+            print("\n[Power] unavailable")
+        }
 
         let m = mem.sample()
         print("\n[Memory] used \(Fmt.bytes(m.usedBytes)) / \(Fmt.bytes(m.totalBytes)) (\(Fmt.percent(m.usedFraction)))")
         print("         app \(Fmt.bytes(m.appBytes))  wired \(Fmt.bytes(m.wiredBytes))  compressed \(Fmt.bytes(m.compressedBytes))  cached \(Fmt.bytes(m.cachedBytes))")
-        print("         swap \(Fmt.bytes(m.swapUsedBytes)) / \(Fmt.bytes(m.swapTotalBytes))  pressure \(String(format: "%.0f%%", m.pressurePercent))")
+        print("         swap \(Fmt.bytes(m.swapUsedBytes)) / \(Fmt.bytes(m.swapTotalBytes))  pressure \(String(format: "%.0f%%", m.pressurePercent)) [\(m.pressureLevel.label)]")
+        print("         swap activity: in \(rate(m.swapInBytesPerSec))  out \(rate(m.swapOutBytesPerSec))")
 
         let n = net.sample()
         print("\n[Network] \(n.connection.rawValue) via \(n.interfaceName ?? "?")  ↓ \(rate(n.downBytesPerSec))  ↑ \(rate(n.upBytesPerSec))")
@@ -110,6 +140,7 @@ enum DumpRunner {
         var bundle = SampleBundle()
         bundle.cpu = c
         bundle.gpu = g
+        bundle.power = pw
         bundle.memory = m
         bundle.network = n
         bundle.disk = d

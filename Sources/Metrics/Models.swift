@@ -2,12 +2,26 @@ import Foundation
 
 // MARK: - CPU
 
+/// A contiguous run of logical cores that share a performance level (an
+/// Efficiency, Performance, or — on this M5 — "Super" cluster). `firstCoreIndex`
+/// and `coreCount` index into `CPUSnapshot.perCore`.
+struct CPUCluster: Identifiable {
+    var name: String          // hw.perflevelN.name, e.g. "Performance" / "Efficiency"
+    var shortName: String     // one-letter badge, e.g. "P" / "E"
+    var firstCoreIndex: Int
+    var coreCount: Int
+    var id: String { name + "@\(firstCoreIndex)" }
+    var range: Range<Int> { firstCoreIndex..<(firstCoreIndex + coreCount) }
+}
+
 struct CPUSnapshot {
     var totalUsage: Double = 0        // 0...1
     var userUsage: Double = 0         // 0...1
     var systemUsage: Double = 0       // 0...1
     var idleUsage: Double = 1         // 0...1
     var perCore: [Double] = []        // 0...1 per core
+    /// E/P clusters covering `perCore` (empty when the split is unknown).
+    var clusters: [CPUCluster] = []
     static let empty = CPUSnapshot()
 }
 
@@ -25,18 +39,77 @@ struct GPUSnapshot {
 
 // MARK: - Memory
 
+/// Kernel VM-pressure level (kern.memorystatus_vm_pressure_level): the same
+/// signal DISPATCH_SOURCE_TYPE_MEMORYPRESSURE dispatches on.
+enum MemoryPressureLevel: Int {
+    case normal = 1
+    case warning = 2
+    case critical = 4
+
+    /// Best-effort mapping for the raw sysctl value (unknown → normal).
+    init(raw: Int32) {
+        switch raw {
+        case 4: self = .critical
+        case 2: self = .warning
+        default: self = .normal
+        }
+    }
+
+    var label: String {
+        switch self {
+        case .normal: return "Normal"
+        case .warning: return "Warning"
+        case .critical: return "Critical"
+        }
+    }
+}
+
 struct MemorySnapshot {
     var totalBytes: UInt64 = 0
     var usedBytes: UInt64 = 0         // app + wired + compressed
     var appBytes: UInt64 = 0
     var wiredBytes: UInt64 = 0
-    var compressedBytes: UInt64 = 0
+    var compressedBytes: UInt64 = 0   // compressor pool size
     var cachedBytes: UInt64 = 0
     var swapUsedBytes: UInt64 = 0
     var swapTotalBytes: UInt64 = 0
     var pressurePercent: Double = 0   // 0...100
+    var pressureLevel: MemoryPressureLevel = .normal
+    var swapInBytesPerSec: Double = 0     // rate of pages faulted back in from swap
+    var swapOutBytesPerSec: Double = 0    // rate of pages pushed out to swap
     var usedFraction: Double { totalBytes > 0 ? Double(usedBytes) / Double(totalBytes) : 0 }
     static let empty = MemorySnapshot()
+}
+
+// MARK: - Power & frequency
+
+/// Effective (residency-weighted, active-only) clock of one CPU cluster,
+/// derived from IOReport DVFS residencies × the hardware frequency table.
+struct ClusterFrequency: Identifiable {
+    var name: String          // matches a CPUCluster name, e.g. "Performance"
+    var megahertz: Double     // 0 when the cluster is fully idle
+    var activePercent: Double // share of the interval spent out of idle
+    var id: String { name }
+}
+
+/// Where a PowerSnapshot's watts came from, surfaced so the card can be honest
+/// about derived vs. measured values.
+enum PowerSource: String {
+    case none, ioreport, smc, hybrid
+}
+
+struct PowerSnapshot {
+    var available: Bool = false
+    var cpuWatts: Double = 0          // may be derived (total − GPU) under `smc`/`hybrid`
+    var gpuWatts: Double = 0
+    var aneWatts: Double? = nil       // Apple Neural Engine, when IOReport reports it
+    var dramWatts: Double? = nil
+    var totalWatts: Double = 0        // system/package total
+    var adapterWatts: Double? = nil   // DC-in from the power adapter (SMC)
+    var source: PowerSource = .none
+    var cpuDerived: Bool = false      // true when cpuWatts = total − GPU rather than measured
+    var clusterFreqs: [ClusterFrequency] = []
+    static let empty = PowerSnapshot()
 }
 
 // MARK: - Disk

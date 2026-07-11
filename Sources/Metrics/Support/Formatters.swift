@@ -16,6 +16,20 @@ enum Fmt {
     /// that store percentages directly.
     static func percentValue(_ value: Double) -> String { String(format: "%.0f%%", value) }
 
+    /// Power in watts: "0.4 W" under ten, "18 W" above (whole watts read cleaner
+    /// at higher draw).
+    static func watts(_ w: Double) -> String {
+        let v = max(0, w)
+        return v < 10 ? String(format: "%.1f W", v) : String(format: "%.0f W", v)
+    }
+
+    /// Clock in MHz → "3.94 GHz" / "912 MHz".
+    static func frequency(_ megahertz: Double) -> String {
+        megahertz >= 1000
+            ? String(format: "%.2f GHz", megahertz / 1000)
+            : String(format: "%.0f MHz", megahertz)
+    }
+
     /// "3d 4h 12m" / "4h 12m" / "12m".
     static func uptime(_ seconds: TimeInterval) -> String {
         let total = Int(seconds)

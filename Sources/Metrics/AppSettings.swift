@@ -32,7 +32,7 @@ enum AppearanceMode: String, Codable, CaseIterable, Identifiable {
 // MARK: - Kinds
 
 enum CardKind: String, Codable, CaseIterable, Identifiable, Hashable {
-    case cpu, gpu, memory, disk, network
+    case cpu, gpu, power, memory, disk, network
     case networkData = "network_data"
     case battery, sensors, fans, processes, bluetooth, device
 
@@ -42,6 +42,7 @@ enum CardKind: String, Codable, CaseIterable, Identifiable, Hashable {
         switch self {
         case .cpu: return "Processor"
         case .gpu: return "Graphics"
+        case .power: return "Power"
         case .memory: return "Memory"
         case .disk: return "Disk"
         case .network: return "Network Activity"

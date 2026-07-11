@@ -5,6 +5,7 @@ import Foundation
 enum HistoryMetric {
     static let cpu = "cpu.usage"                    // %
     static let gpu = "gpu.usage"                    // %
+    static let powerTotal = "power.total"           // W
     static let memoryUsed = "memory.used"           // bytes
     static let memoryPressure = "memory.pressure"   // %
     static let hotspot = "temp.hotspot"             // °C
@@ -35,6 +36,9 @@ final class HistoryRecorder {
         }
         if let v = bundle.gpu, v.available {
             samples.append((HistoryMetric.gpu, v.usageFraction * 100))
+        }
+        if let v = bundle.power, v.available {
+            samples.append((HistoryMetric.powerTotal, v.totalWatts))
         }
         if let v = bundle.memory {
             samples.append((HistoryMetric.memoryUsed, Double(v.usedBytes)))

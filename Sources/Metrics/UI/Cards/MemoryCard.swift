@@ -7,7 +7,8 @@ struct MemoryCard: View {
     var body: some View {
         let m = engine.memory
         CardContainer(title: "Memory",
-                      subtitle: "\(Fmt.bytes(m.usedBytes)) / \(Fmt.bytes(m.totalBytes))") {
+                      subtitle: "\(Fmt.bytes(m.usedBytes)) / \(Fmt.bytes(m.totalBytes))",
+                      titleAccessory: AnyView(pressureBadge(m.pressureLevel))) {
             HStack(alignment: .center, spacing: 14) {
                 DonutGauge(fraction: m.usedFraction,
                            color: .purple,
@@ -20,14 +21,15 @@ struct MemoryCard: View {
                     StatRow(label: "Cached", value: Fmt.bytes(m.cachedBytes), dotColor: .gray)
                 }
             }
-            StatRow(label: "Swap",
+            StatRow(label: "Swap Used",
                     value: "\(Fmt.bytes(m.swapUsedBytes)) / \(Fmt.bytes(m.swapTotalBytes))")
+            StatRow(label: "Swap activity", value: swapActivity(m))
             HStack(spacing: 8) {
                 Text("Pressure")
                     .font(.system(size: 11.5))
                     .foregroundStyle(.secondary)
                 ProgressBar(fraction: m.pressurePercent / 100,
-                            color: pressureColor(m.pressurePercent))
+                            color: levelColor(m.pressureLevel))
                 Text(String(format: "%.0f%%", m.pressurePercent))
                     .font(.system(size: 11.5, weight: .medium))
                     .monospacedDigit()
@@ -35,6 +37,21 @@ struct MemoryCard: View {
             ChartWindowPicker(kind: .memory)
             chart
         }
+    }
+
+    /// Colour-coded pressure dot + level word shown beside the card's value.
+    private func pressureBadge(_ level: MemoryPressureLevel) -> some View {
+        HStack(spacing: 4) {
+            Circle().fill(levelColor(level)).frame(width: 7, height: 7)
+            Text(level.label)
+                .font(.system(size: 11))
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    private func swapActivity(_ m: MemorySnapshot) -> String {
+        if m.swapInBytesPerSec < 1 && m.swapOutBytesPerSec < 1 { return "Idle" }
+        return "in \(Fmt.rate(m.swapInBytesPerSec))  ·  out \(Fmt.rate(m.swapOutBytesPerSec))"
     }
 
     @ViewBuilder private var chart: some View {
@@ -49,9 +66,11 @@ struct MemoryCard: View {
         }
     }
 
-    private func pressureColor(_ percent: Double) -> Color {
-        if percent < 50 { return .green }
-        if percent < 80 { return .yellow }
-        return .red
+    private func levelColor(_ level: MemoryPressureLevel) -> Color {
+        switch level {
+        case .normal: return .green
+        case .warning: return .yellow
+        case .critical: return .red
+        }
     }
 }
