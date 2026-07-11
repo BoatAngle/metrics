@@ -219,6 +219,10 @@ final class MetricsEngine {
         if let v = b.device { device = v }
         if let v = b.networkData { networkData = v }
 
+        // Evaluate alert rules against the freshly applied snapshots (features
+        // #15–#23). Cheap: a few comparisons per enabled rule.
+        AlertEngine.shared.evaluate(from: self)
+
         if Date().timeIntervalSince(lastWidgetPublish) >= Self.widgetPublishInterval {
             lastWidgetPublish = Date()
             WidgetPublisher.publish(from: self)

@@ -48,6 +48,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         )
         buildMainMenu()
         observeAppearance()
+        // Alerts (features #15–#23): wire the notification delegate/categories,
+        // then load the persisted rules so evaluation can begin on the next tick.
+        AlertNotifier.shared.configure()
+        AlertEngine.shared.load()
         FanControl.shared.engagePersistedModeAtLaunch()
         DesktopWidgetController.shared.start()
         // Launching by hand (Finder, Spotlight, `open`) shows the dashboard;

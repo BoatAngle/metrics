@@ -15,6 +15,8 @@ struct SettingsView: View {
                 .tabItem { Label("Dashboard", systemImage: "rectangle.grid.1x2") }
             FansSettingsTab()
                 .tabItem { Label("Fans", systemImage: "fanblades") }
+            AlertsSettingsTab()
+                .tabItem { Label("Alerts", systemImage: "bell.badge") }
             widgetsTab
                 .tabItem { Label("Widgets", systemImage: "square.on.square.dashed") }
             networkTab

@@ -25,6 +25,7 @@ let package = Package(
                 .linkedFramework("SystemConfiguration"),
                 .linkedFramework("ServiceManagement"),
                 .linkedFramework("WidgetKit"),
+                .linkedFramework("UserNotifications"),
             ]
         ),
         .executableTarget(

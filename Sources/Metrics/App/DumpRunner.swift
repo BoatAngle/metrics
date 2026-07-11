@@ -184,7 +184,56 @@ enum DumpRunner {
         }
         sem.wait()
 
+        dumpAlerts(sensors: s)
+
         print("\nDone.")
+    }
+
+    /// Alerts dry-run (features #15–#23): load the persisted rules, show the
+    /// quiet-hours/DND config, and print each rule with its threshold. No
+    /// notifications are posted — headless has no bundle, so the notifier is a
+    /// no-op here anyway.
+    private static func dumpAlerts(sensors: SensorsSnapshot) {
+        MainActor.assumeIsolated {
+            let store = AlertStore()
+            let (rules, config) = store.load()
+            let s = SettingsStore.shared
+            let notif = AlertNotifier.shared.isAvailable ? "available" : "no bundle (headless)"
+            print("\n[Alerts] \(rules.count) rule(s); notifications \(notif)")
+            let quiet = s.quietHoursEnabled
+                ? "\(hhmm(s.quietHoursStartMinutes))–\(hhmm(s.quietHoursEndMinutes))"
+                : "off"
+            let focus = FocusState.isActive().map { $0 ? "on" : "off" } ?? "unknown"
+            print("         quiet hours \(quiet)  DND-suppress \(s.suppressDuringDND)  Focus \(focus)  data-budget \(config.dataBudgetEnabled ? "on" : "off")")
+            if let names = Optional(AlertEngine.availableSensorNames(engineSensors: sensors)), !names.isEmpty {
+                print("         sensor rules can target: \(names.joined(separator: ", "))")
+            }
+            for r in rules {
+                let ctx: String
+                if r.metric.needsSensor { ctx = " (\(r.sensorName ?? "—"))" }
+                else if r.metric.needsVolume { ctx = " (\(r.volumePath ?? "boot"))" }
+                else { ctx = "" }
+                let thr = r.metric.isLevel
+                    ? r.metric.format(r.threshold, fahrenheit: s.useFahrenheit)
+                    : "\(r.comparator.symbol) \(r.metric.format(r.threshold, fahrenheit: s.useFahrenheit))"
+                print("         [\(r.enabled ? "on " : "off")] \(r.name): \(r.metric.title)\(ctx) \(thr)"
+                    + "  sustain \(Int(r.sustainSeconds))s  cooldown \(Int(r.cooldownSeconds))s"
+                    + (r.quietHoursBypass ? "  [bypass]" : "")
+                    + (r.escalationFanMode.map { "  → fan \($0.title)" } ?? ""))
+            }
+            let recent = AlertEngine.shared.history.entries.prefix(3)
+            if recent.isEmpty {
+                print("         history: (none recorded)")
+            } else {
+                for e in recent {
+                    print("         history: \(Fmt.date(e.date))  \(e.ruleName)  peak \(e.peakText)")
+                }
+            }
+        }
+    }
+
+    private static func hhmm(_ minutes: Int) -> String {
+        String(format: "%02d:%02d", minutes / 60, minutes % 60)
     }
 
     /// One process row with all per-pid columns (feature #13).

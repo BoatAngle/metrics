@@ -99,6 +99,12 @@ private struct PersistedSettings: Codable {
     var monthlyDataCapGB: Double? = nil
     /// Processes card sort column (feature #13), stored as ProcessSortKey.rawValue.
     var processSortKey: String? = nil
+    /// Alerts quiet hours (feature #22): a global mute window for non-bypass
+    /// rules, plus best-effort suppression while macOS Focus/DND is on.
+    var quietHoursEnabled: Bool? = nil
+    var quietHoursStartMinutes: Int? = nil   // minutes since local midnight
+    var quietHoursEndMinutes: Int? = nil
+    var suppressDuringDND: Bool? = nil
 }
 
 // MARK: - Store
@@ -128,6 +134,11 @@ final class SettingsStore {
     var monthlyDataCapGB: Double? { didSet { save() } }
     /// Which column the Processes card ranks by (feature #13).
     var processSortKey: ProcessSortKey { didSet { save() } }
+    /// Alerts quiet hours (feature #22).
+    var quietHoursEnabled: Bool { didSet { save() } }
+    var quietHoursStartMinutes: Int { didSet { save() } }
+    var quietHoursEndMinutes: Int { didSet { save() } }
+    var suppressDuringDND: Bool { didSet { save() } }
 
     /// Dashboard cards in display order with hidden ones filtered out.
     var visibleCards: [CardKind] {
@@ -173,6 +184,10 @@ final class SettingsStore {
         billingCycleStartDay = min(max(p.billingCycleStartDay ?? 1, 1), 31)
         monthlyDataCapGB = p.monthlyDataCapGB.map { max(0, $0) }
         processSortKey = p.processSortKey.flatMap { ProcessSortKey(rawValue: $0) } ?? .cpu
+        quietHoursEnabled = p.quietHoursEnabled ?? false
+        quietHoursStartMinutes = min(max(p.quietHoursStartMinutes ?? (22 * 60), 0), 24 * 60 - 1)
+        quietHoursEndMinutes = min(max(p.quietHoursEndMinutes ?? (7 * 60), 0), 24 * 60 - 1)
+        suppressDuringDND = p.suppressDuringDND ?? true
         loaded = true
     }
 
@@ -191,7 +206,11 @@ final class SettingsStore {
                                   },
                                   billingCycleStartDay: billingCycleStartDay,
                                   monthlyDataCapGB: monthlyDataCapGB,
-                                  processSortKey: processSortKey.rawValue)
+                                  processSortKey: processSortKey.rawValue,
+                                  quietHoursEnabled: quietHoursEnabled,
+                                  quietHoursStartMinutes: quietHoursStartMinutes,
+                                  quietHoursEndMinutes: quietHoursEndMinutes,
+                                  suppressDuringDND: suppressDuringDND)
         if let data = try? JSONEncoder().encode(p) {
             UserDefaults.standard.set(data, forKey: Self.key)
         }
