@@ -5,8 +5,19 @@ import UniformTypeIdentifiers
 /// Cards for unavailable hardware render nothing.
 struct MetricCardView: View {
     let kind: CardKind
+    /// When true (dashboard/popover), the card gets a collapsible, clickable
+    /// title and a one-line summary while collapsed (#48). Desktop widgets pass
+    /// false so they keep their full always-on layout.
+    var collapsible: Bool = false
+
+    @Environment(MetricsEngine.self) private var engine
+    @Environment(SettingsStore.self) private var settings
 
     var body: some View {
+        card.environment(\.cardCollapse, collapseContext)
+    }
+
+    @ViewBuilder private var card: some View {
         switch kind {
         case .cpu: CPUCard()
         case .gpu: GPUCard()
@@ -21,6 +32,52 @@ struct MetricCardView: View {
         case .processes: ProcessesCard()
         case .bluetooth: BluetoothCard()
         case .device: DeviceCard()
+        }
+    }
+
+    /// The collapse state + live summary handed to `CardContainer` (#48). Nil
+    /// when this card isn't collapsible, which leaves the container unchanged.
+    private var collapseContext: CardCollapseContext? {
+        guard collapsible else { return nil }
+        return CardCollapseContext(
+            collapsed: settings.collapsedCards.contains(kind),
+            summary: CardSummary.line(for: kind, engine: engine, settings: settings),
+            toggle: {
+                withAnimation(.easeInOut(duration: 0.25)) { settings.toggleCollapsed(kind) }
+            })
+    }
+}
+
+// MARK: - Right-click card menu (feature #49)
+
+private extension View {
+    /// Right-click context menu shared by the popover and dashboard cards:
+    /// hide, move to top, and add/remove the desktop widget.
+    func cardContextMenu(_ kind: CardKind, settings: SettingsStore) -> some View {
+        contextMenu {
+            Button {
+                withAnimation { _ = settings.hiddenCards.insert(kind) }
+            } label: {
+                Label("Hide Card", systemImage: "eye.slash")
+            }
+            Button {
+                withAnimation { settings.moveCardToTop(kind) }
+            } label: {
+                Label("Move to Top", systemImage: "arrow.up.to.line")
+            }
+            // Fans has no desktop widget (matches the Widgets settings tab).
+            if kind != .fans {
+                let isWidget = settings.desktopWidgets.contains(kind)
+                Button {
+                    settings.toggleDesktopWidget(kind)
+                    // A freshly added widget floats immediately so it can be
+                    // dragged into place (same behavior as the settings toggle).
+                    if !isWidget { DesktopWidgetController.shared.arranging = true }
+                } label: {
+                    Label(isWidget ? "Remove Desktop Widget" : "Add Desktop Widget",
+                          systemImage: isWidget ? "rectangle.badge.minus" : "rectangle.badge.plus")
+                }
+            }
         }
     }
 }
@@ -75,10 +132,18 @@ private struct CardDropResetDelegate: DropDelegate {
 }
 
 private extension View {
-    /// Makes a card draggable and a live-reorder drop target.
+    /// Makes a card draggable and a live-reorder drop target. Dragging lifts the
+    /// card — a slight scale + shadow — and the spring settles it on drop (#50),
+    /// replacing the old flat 0.4-opacity feedback.
     func cardReorderable(_ kind: CardKind, dragging: Binding<CardKind?>) -> some View {
-        self
-            .opacity(dragging.wrappedValue == kind ? 0.4 : 1)
+        let lifted = dragging.wrappedValue == kind
+        return self
+            .scaleEffect(lifted ? 1.02 : 1)
+            .shadow(color: .black.opacity(lifted ? 0.22 : 0),
+                    radius: lifted ? 10 : 0, y: lifted ? 5 : 0)
+            .opacity(lifted ? 0.97 : 1)
+            .zIndex(lifted ? 1 : 0)
+            .animation(.spring(response: 0.3, dampingFraction: 0.7), value: lifted)
             .onDrag {
                 // Starting a drag also clears any state a cancelled drag
                 // might have left behind.
@@ -96,6 +161,11 @@ struct DashboardView: View {
     var openDashboard: () -> Void
     var openSettings: () -> Void
     var quit: () -> Void
+    /// Pin support (#45): the controller-owned observable that both this header
+    /// and the popover's close behavior read. Nil in contexts without a
+    /// pinnable popover.
+    var popoverState: PopoverState? = nil
+    var onTogglePin: (() -> Void)? = nil
 
     // Plain State (not @State): the macro form needs the SwiftUIMacros plugin,
     // which the Command Line Tools toolchain doesn't ship. SwiftUI picks up
@@ -109,8 +179,9 @@ struct DashboardView: View {
             ScrollView {
                 VStack(spacing: 10) {
                     ForEach(settings.visibleCards) { kind in
-                        MetricCardView(kind: kind)
+                        MetricCardView(kind: kind, collapsible: true)
                             .cardReorderable(kind, dragging: draggingCard.projectedValue)
+                            .cardContextMenu(kind, settings: settings)
                     }
                 }
                 .padding(12)
@@ -127,6 +198,16 @@ struct DashboardView: View {
             Text("Metrics")
                 .font(.system(size: 13, weight: .semibold))
             Spacer()
+            if let popoverState, let onTogglePin {
+                Button(action: onTogglePin) {
+                    Image(systemName: popoverState.pinned ? "pin.fill" : "pin")
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(popoverState.pinned ? Color.accentColor : Color.secondary)
+                .help(popoverState.pinned
+                      ? "Unpin — clicking away closes the popover again"
+                      : "Pin — keep the popover open when clicking away")
+            }
             Button(action: openDashboard) {
                 Image(systemName: "arrow.up.left.and.arrow.down.right")
             }
@@ -242,8 +323,9 @@ struct DashboardWindowView: View {
             ForEach(0..<balancedColumns.count, id: \.self) { column in
                 VStack(spacing: 14) {
                     ForEach(balancedColumns[column]) { kind in
-                        MetricCardView(kind: kind)
+                        MetricCardView(kind: kind, collapsible: true)
                             .cardReorderable(kind, dragging: draggingCard.projectedValue)
+                            .cardContextMenu(kind, settings: settings)
                             .overlay(cardHighlight(kind))
                             .id(kind) // scroll target for metrics://card/<kind>
                     }
@@ -266,14 +348,15 @@ struct DashboardWindowView: View {
     }
 
     /// Greedy shortest-column packing by estimated card height, so the two
-    /// columns come out roughly even instead of row-aligned with gaps.
+    /// columns come out roughly even instead of row-aligned with gaps. A
+    /// collapsed card (#48) counts as a single summary line.
     private var balancedColumns: [[CardKind]] {
         var columns: [[CardKind]] = [[], []]
         var heights: [CGFloat] = [0, 0]
         for kind in settings.visibleCards {
             let target = heights[0] <= heights[1] ? 0 : 1
             columns[target].append(kind)
-            heights[target] += kind.estimatedCardHeight
+            heights[target] += settings.collapsedCards.contains(kind) ? 46 : kind.estimatedCardHeight
         }
         return columns
     }

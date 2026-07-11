@@ -86,6 +86,8 @@ struct CPUCard: View {
             RoundedRectangle(cornerRadius: 2, style: .continuous)
                 .fill(coreColor(clamped))
                 .frame(height: max(2, CGFloat(clamped) * 20))
+                // Ease each core bar between samples (#50), keyed to the value.
+                .animation(.easeOut(duration: 0.25), value: clamped)
         }
         .frame(maxWidth: .infinity)
         .frame(height: 20)

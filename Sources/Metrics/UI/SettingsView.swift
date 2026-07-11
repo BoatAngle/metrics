@@ -73,6 +73,18 @@ struct SettingsView: View {
             } footer: {
                 Text("Applies to the dashboard and this window. Menu bar items always match the menu bar.")
             }
+            Section {
+                LabeledContent("Toggle dashboard") {
+                    HotkeyRecorder(current: settings.dashboardHotkey) { settings.dashboardHotkey = $0 }
+                }
+                LabeledContent("Focus mode") {
+                    HotkeyRecorder(current: settings.focusHotkey) { settings.focusHotkey = $0 }
+                }
+            } header: {
+                Text("Global shortcuts")
+            } footer: {
+                Text("System-wide hotkeys, active from any app. “Toggle dashboard” shows or hides the menu-bar popover; “Focus mode” is reserved for an upcoming feature. Default: none.")
+            }
         }
         .formStyle(.grouped)
     }

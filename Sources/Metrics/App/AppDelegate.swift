@@ -67,6 +67,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         )
         buildMainMenu()
         observeAppearance()
+        // Global hotkeys (feature #46): register the persisted bindings and
+        // keep them in step as the user re-records them in Settings.
+        registerHotkeys()
+        observeHotkeys()
         // Alerts (features #15–#23): wire the notification delegate/categories,
         // then load the persisted rules so evaluation can begin on the next tick.
         AlertNotifier.shared.configure()
@@ -102,6 +106,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             self.settingsWindow?.appearance = appearance
             self.dashboardWindow?.appearance = appearance
             self.weeklyWindow?.appearance = appearance
+        }
+    }
+
+    // MARK: - Global hotkeys (feature #46)
+
+    /// Registers both optional hotkeys. The toggle-dashboard key flips the
+    /// menu-bar popover; the focus-mode key is a registration seam only — it
+    /// fires a callback P13 will hook, but ships no Focus mode yet.
+    private func registerHotkeys() {
+        let settings = SettingsStore.shared
+        HotkeyCenter.shared.setBinding(settings.dashboardHotkey, for: .toggleDashboard) { [weak self] in
+            self?.statusController?.toggleFromHotkey()
+        }
+        HotkeyCenter.shared.setBinding(settings.focusHotkey, for: .focusMode) {
+            NSLog("Metrics: Focus-mode hotkey pressed — in-app Focus mode not implemented yet (P13).")
+        }
+    }
+
+    /// Re-registers whenever the user records or clears a shortcut in Settings.
+    private func observeHotkeys() {
+        observeChanges {
+            _ = SettingsStore.shared.dashboardHotkey
+            _ = SettingsStore.shared.focusHotkey
+        } perform: { [weak self] in
+            self?.registerHotkeys()
         }
     }
 

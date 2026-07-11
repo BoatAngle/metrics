@@ -1,3 +1,5 @@
+import AppKit
+import Carbon.HIToolbox
 import Foundation
 import SMCCore
 
@@ -187,8 +189,25 @@ enum DumpRunner {
         dumpAnalytics(device: dev, network: n, memory: m, power: pw, sensors: s, store: store)
         dumpAlerts(sensors: s)
         dumpMenuBar(cpu: c, gpu: g, memory: m, network: n, sensors: s, battery: b)
+        dumpPolish()
 
         print("\nDone.")
+    }
+
+    /// Dashboard & popover polish (Package 12). Only the pure hotkey-formatting
+    /// path can be exercised headlessly (collapse/pin/context-menu are GUI-only);
+    /// this confirms the Carbon key-name table and modifier rendering resolve.
+    private static func dumpPolish() {
+        let cases: [(name: String, keyCode: Int, mods: NSEvent.ModifierFlags)] = [
+            ("toggle dashboard", kVK_ANSI_M, [.command, .option]),
+            ("focus mode", kVK_F5, [.control, .shift]),
+            ("space combo", kVK_Space, [.command]),
+        ]
+        print("\n[Polish] global-hotkey display strings:")
+        for c in cases {
+            let b = HotkeyCenter.Binding(keyCode: c.keyCode, modifiers: Int(c.mods.rawValue))
+            print("         \(c.name): \(b.displayString)")
+        }
     }
 
     /// Menu bar overhaul (Package 11, features #33–#40). Exercises the non-UI

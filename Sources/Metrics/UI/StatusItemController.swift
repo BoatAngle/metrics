@@ -1,10 +1,18 @@
 import AppKit
+import Observation
 import SwiftUI
 
 /// Hosting view that never intercepts clicks — the status bar button
 /// underneath handles them.
 private final class PassthroughHostingView: NSHostingView<AnyView> {
     override func hitTest(_ point: NSPoint) -> NSView? { nil }
+}
+
+/// Observable pin flag for the dashboard popover (#45). One instance is created
+/// per popover session and thrown away on close, so pinning never persists.
+@Observable @MainActor
+final class PopoverState {
+    var pinned = false
 }
 
 /// Creates one NSStatusItem per configured menu bar item (fixed widths, so the
@@ -30,6 +38,8 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
     private var popover: NSPopover?
     private weak var popoverAnchor: NSStatusBarButton?
     private var clickMonitor: Any?
+    /// Pin state for the currently-open popover (#45); reset on every close.
+    private var popoverState = PopoverState()
 
     init(engine: MetricsEngine,
          settings: SettingsStore,
@@ -237,6 +247,8 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
     }
 
     private func showPopover(from button: NSStatusBarButton) {
+        // Fresh pin state each time — pinning never carries across opens (#45).
+        popoverState = PopoverState()
         let p = NSPopover()
         p.behavior = .transient
         p.delegate = self
@@ -251,7 +263,9 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
                     self?.closePopover()
                     self?.openSettingsAction()
                 },
-                quit: { NSApp.terminate(nil) }
+                quit: { NSApp.terminate(nil) },
+                popoverState: popoverState,
+                onTogglePin: { [weak self] in self?.togglePin() }
             )
             .environment(engine)
             .environment(settings)
@@ -265,9 +279,55 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
 
         // .transient alone is unreliable for LSUIElement apps (no key window
         // to resign) — close explicitly on any click outside our app.
+        installClickMonitor()
+    }
+
+    /// Watches for clicks outside our app to close a transient popover. Pinning
+    /// suspends this (and switches the popover to .applicationDefined) so the
+    /// popover stays open across outside clicks (#45).
+    private func installClickMonitor() {
+        guard clickMonitor == nil else { return }
         clickMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] _ in
             Task { @MainActor in self?.closePopover() }
         }
+    }
+
+    private func removeClickMonitor() {
+        if let monitor = clickMonitor {
+            NSEvent.removeMonitor(monitor)
+            clickMonitor = nil
+        }
+    }
+
+    /// Flips the popover between pinned and transient (#45).
+    private func togglePin() {
+        popoverState.pinned.toggle()
+        if popoverState.pinned {
+            popover?.behavior = .applicationDefined  // AppKit won't auto-close it
+            removeClickMonitor()                     // and neither will our click-away
+        } else {
+            popover?.behavior = .transient
+            installClickMonitor()
+        }
+    }
+
+    /// Toggles the popover from the global hotkey (#46), anchored to the
+    /// leftmost menu-bar item.
+    func toggleFromHotkey() {
+        guard let button = anchorButton() else {
+            openDashboardAction()
+            return
+        }
+        togglePopover(from: button)
+    }
+
+    /// The button of the leftmost configured item (falls back to any item).
+    private func anchorButton() -> NSStatusBarButton? {
+        if let firstID = settings.widgetInstances.first?.id,
+           let button = items[firstID]?.statusItem.button {
+            return button
+        }
+        return items.values.first?.statusItem.button
     }
 
     private func closePopover() {
@@ -276,12 +336,11 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
     }
 
     private func popoverCleanup() {
-        if let monitor = clickMonitor {
-            NSEvent.removeMonitor(monitor)
-            clickMonitor = nil
-        }
+        removeClickMonitor()
         popover = nil
         popoverAnchor = nil
+        // Pin state never survives a close (#45).
+        popoverState.pinned = false
     }
 
     // Covers closes we didn't initiate (Esc, transient behavior firing, etc.).

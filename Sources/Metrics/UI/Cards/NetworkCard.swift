@@ -37,11 +37,12 @@ struct NetworkCard: View {
 
             Divider()
             VStack(spacing: 5) {
+                // Identity values are click-to-copy (#49).
                 if let v4 = net.localIPv4 {
-                    StatRow(label: "Local IP", value: v4)
+                    CopyableStatRow(label: "Local IP", value: v4)
                 }
                 if let v6 = net.localIPv6 {
-                    StatRow(label: "Local IPv6", value: v6)
+                    CopyableStatRow(label: "Local IPv6", value: v6)
                 }
                 publicIPRow
             }
@@ -137,7 +138,13 @@ struct NetworkCard: View {
             Text("Wi-Fi")
                 .font(.system(size: 10.5, weight: .semibold))
                 .foregroundStyle(.tertiary)
-            StatRow(label: "SSID", value: ssidText(wifi))
+            // The SSID is click-to-copy when we actually have it (#49);
+            // otherwise it's an explanatory placeholder, not worth copying.
+            if let ssid = wifi.ssid {
+                CopyableStatRow(label: "SSID", value: ssid)
+            } else {
+                StatRow(label: "SSID", value: ssidText(wifi))
+            }
             if let bssid = wifi.bssid {
                 StatRow(label: "BSSID", value: bssid)
             }
@@ -231,7 +238,7 @@ struct NetworkCard: View {
 
     @ViewBuilder private var publicIPRow: some View {
         if let ip = publicIP.wrappedValue {
-            StatRow(label: "Public IP", value: ip)
+            CopyableStatRow(label: "Public IP", value: ip)
         } else {
             HStack(spacing: 6) {
                 Text("Public IP")

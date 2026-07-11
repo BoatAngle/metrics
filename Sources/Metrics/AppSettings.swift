@@ -113,6 +113,14 @@ private struct PersistedSettings: Codable {
     /// downgrade still finds something to show.
     var widgetInstances: [WidgetInstance]? = nil
     var menuBarReactiveColors: Bool? = nil
+    /// Dashboard & popover polish (Package 12). Cards collapsed to a one-line
+    /// summary (#48), and the two optional global hotkeys (#46) stored as
+    /// virtual keyCode + NSEvent modifier-flags rawValue.
+    var collapsedCards: [CardKind]? = nil
+    var dashboardHotkeyKeyCode: Int? = nil
+    var dashboardHotkeyModifiers: Int? = nil
+    var focusHotkeyKeyCode: Int? = nil
+    var focusHotkeyModifiers: Int? = nil
 }
 
 // MARK: - Store
@@ -152,10 +160,38 @@ final class SettingsStore {
     var quietHoursStartMinutes: Int { didSet { save() } }
     var quietHoursEndMinutes: Int { didSet { save() } }
     var suppressDuringDND: Bool { didSet { save() } }
+    /// Cards collapsed to a single summary line in the dashboard/popover (#48).
+    var collapsedCards: Set<CardKind> { didSet { save() } }
+    /// Global hotkey that toggles the menu-bar popover from anywhere (#46).
+    var dashboardHotkey: HotkeyCenter.Binding? { didSet { save() } }
+    /// Seam hotkey for Package 13's Focus mode (#46). Registered here; the
+    /// action is a no-op until P13 wires it.
+    var focusHotkey: HotkeyCenter.Binding? { didSet { save() } }
 
     /// Dashboard cards in display order with hidden ones filtered out.
     var visibleCards: [CardKind] {
         cardOrder.filter { !hiddenCards.contains($0) }
+    }
+
+    /// Flips a card between full and one-line-summary states (#48).
+    func toggleCollapsed(_ kind: CardKind) {
+        if collapsedCards.contains(kind) { collapsedCards.remove(kind) }
+        else { collapsedCards.insert(kind) }
+    }
+
+    /// Moves a card to the front of the display order (context menu, #49).
+    func moveCardToTop(_ kind: CardKind) {
+        var order = cardOrder
+        guard let idx = order.firstIndex(of: kind), idx != 0 else { return }
+        order.remove(at: idx)
+        order.insert(kind, at: 0)
+        cardOrder = order
+    }
+
+    /// Adds or removes the card's floating desktop widget (context menu, #49).
+    func toggleDesktopWidget(_ kind: CardKind) {
+        if desktopWidgets.contains(kind) { desktopWidgets.remove(kind) }
+        else { desktopWidgets.insert(kind) }
     }
 
     /// The chart window a card is showing (defaults to Live).
@@ -249,6 +285,17 @@ final class SettingsStore {
         quietHoursStartMinutes = min(max(p.quietHoursStartMinutes ?? (22 * 60), 0), 24 * 60 - 1)
         quietHoursEndMinutes = min(max(p.quietHoursEndMinutes ?? (7 * 60), 0), 24 * 60 - 1)
         suppressDuringDND = p.suppressDuringDND ?? true
+        collapsedCards = Set(p.collapsedCards ?? [])
+        if let k = p.dashboardHotkeyKeyCode, let m = p.dashboardHotkeyModifiers {
+            dashboardHotkey = HotkeyCenter.Binding(keyCode: k, modifiers: m)
+        } else {
+            dashboardHotkey = nil
+        }
+        if let k = p.focusHotkeyKeyCode, let m = p.focusHotkeyModifiers {
+            focusHotkey = HotkeyCenter.Binding(keyCode: k, modifiers: m)
+        } else {
+            focusHotkey = nil
+        }
         loaded = true
     }
 
@@ -278,7 +325,12 @@ final class SettingsStore {
                                   quietHoursEndMinutes: quietHoursEndMinutes,
                                   suppressDuringDND: suppressDuringDND,
                                   widgetInstances: widgetInstances,
-                                  menuBarReactiveColors: menuBarReactiveColors)
+                                  menuBarReactiveColors: menuBarReactiveColors,
+                                  collapsedCards: Array(collapsedCards),
+                                  dashboardHotkeyKeyCode: dashboardHotkey?.keyCode,
+                                  dashboardHotkeyModifiers: dashboardHotkey?.modifiers,
+                                  focusHotkeyKeyCode: focusHotkey?.keyCode,
+                                  focusHotkeyModifiers: focusHotkey?.modifiers)
         if let data = try? JSONEncoder().encode(p) {
             UserDefaults.standard.set(data, forKey: Self.key)
         }

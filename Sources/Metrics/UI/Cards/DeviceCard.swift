@@ -21,8 +21,13 @@ struct DeviceCard: View {
     var body: some View {
         CardContainer(title: "Device") {
             VStack(spacing: 5) {
-                ForEach(rows, id: \.0) { row in
-                    StatRow(label: row.0, value: row.1)
+                ForEach(rows, id: \.label) { row in
+                    if row.copyable {
+                        // Identity values are click-to-copy (#49).
+                        CopyableStatRow(label: row.label, value: row.value)
+                    } else {
+                        StatRow(label: row.label, value: row.value)
+                    }
                 }
             }
             Divider()
@@ -97,20 +102,20 @@ struct DeviceCard: View {
 
     // MARK: - Device rows
 
-    private var rows: [(String, String)] {
+    private var rows: [(label: String, value: String, copyable: Bool)] {
         let d = engine.device
-        var out: [(String, String)] = []
-        if !d.modelName.isEmpty { out.append(("Model", d.modelName)) }
-        if !d.chipName.isEmpty { out.append(("Chip", d.chipName)) }
+        var out: [(label: String, value: String, copyable: Bool)] = []
+        if !d.modelName.isEmpty { out.append(("Model", d.modelName, false)) }
+        if !d.chipName.isEmpty { out.append(("Chip", d.chipName, false)) }
         if !d.osVersionString.isEmpty {
             let os = d.buildVersion.isEmpty
                 ? d.osVersionString
                 : "\(d.osVersionString) (\(d.buildVersion))"
-            out.append(("macOS", os))
+            out.append(("macOS", os, true))
         }
-        if !d.hostname.isEmpty { out.append(("Hostname", d.hostname)) }
-        if d.uptimeSeconds > 0 { out.append(("Uptime", Fmt.uptime(d.uptimeSeconds))) }
-        if let boot = d.bootDate { out.append(("Booted", Fmt.date(boot))) }
+        if !d.hostname.isEmpty { out.append(("Hostname", d.hostname, true)) }
+        if d.uptimeSeconds > 0 { out.append(("Uptime", Fmt.uptime(d.uptimeSeconds), false)) }
+        if let boot = d.bootDate { out.append(("Booted", Fmt.date(boot), false)) }
         return out
     }
 }

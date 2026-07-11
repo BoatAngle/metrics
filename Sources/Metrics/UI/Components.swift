@@ -12,8 +12,56 @@ struct CardContainer<Content: View>: View {
     var titleAccessory: AnyView? = nil
     @ViewBuilder var content: Content
 
+    /// Injected by `MetricCardView` in the dashboard/popover (#48). Absent in
+    /// desktop widgets and previews, where the header stays static.
+    @Environment(\.cardCollapse) private var collapse
+
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
+            header
+            if !(collapse?.collapsed ?? false) {
+                content
+            }
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 11, style: .continuous)
+                .fill(Color(nsColor: .controlBackgroundColor))
+                .shadow(color: .black.opacity(0.05), radius: 2, y: 1)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 11, style: .continuous)
+                .strokeBorder(Color(nsColor: .separatorColor).opacity(0.6), lineWidth: 1)
+        )
+    }
+
+    @ViewBuilder private var header: some View {
+        if let collapse {
+            HStack(alignment: .center, spacing: 6) {
+                // AppKit-clickable title row (a SwiftUI Button here is eaten by
+                // the card's .onDrag reorder gesture).
+                CardTitleToggle(title: title, collapsed: collapse.collapsed, action: collapse.toggle)
+                Spacer(minLength: 8)
+                if collapse.collapsed {
+                    Text(collapse.summary)
+                        .font(.system(size: 11.5, weight: .medium))
+                        .foregroundStyle(.secondary)
+                        .monospacedDigit()
+                        .lineLimit(1)
+                        .transition(.opacity)
+                } else {
+                    if let subtitle {
+                        Text(subtitle)
+                            .font(.system(size: 11))
+                            .foregroundStyle(.tertiary)
+                    }
+                    if let titleAccessory {
+                        titleAccessory
+                    }
+                }
+            }
+        } else {
             HStack(alignment: .firstTextBaseline, spacing: 6) {
                 Text(title)
                     .font(.system(size: 12, weight: .semibold))
@@ -28,19 +76,7 @@ struct CardContainer<Content: View>: View {
                     titleAccessory
                 }
             }
-            content
         }
-        .padding(12)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(
-            RoundedRectangle(cornerRadius: 11, style: .continuous)
-                .fill(Color(nsColor: .controlBackgroundColor))
-                .shadow(color: .black.opacity(0.05), radius: 2, y: 1)
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 11, style: .continuous)
-                .strokeBorder(Color(nsColor: .separatorColor).opacity(0.6), lineWidth: 1)
-        )
     }
 }
 
@@ -55,20 +91,29 @@ struct DonutGauge: View {
     var centerBottom: String? = nil
 
     var body: some View {
-        ZStack {
+        // Ease the arc and roll the numbers between samples (#50). Keyed to the
+        // value itself, so it only animates on a fresh reading — nothing runs
+        // every frame.
+        let clamped = min(max(fraction, 0), 1)
+        return ZStack {
             Circle().stroke(color.opacity(0.15), lineWidth: lineWidth)
             Circle()
-                .trim(from: 0, to: min(max(fraction, 0), 1))
+                .trim(from: 0, to: clamped)
                 .stroke(color, style: StrokeStyle(lineWidth: lineWidth, lineCap: .round))
                 .rotationEffect(.degrees(-90))
+                .animation(.easeOut(duration: 0.25), value: clamped)
             VStack(spacing: 0) {
                 Text(centerTop)
                     .font(.system(size: size * 0.22, weight: .semibold))
                     .monospacedDigit()
+                    .contentTransition(.numericText())
+                    .animation(.easeOut(duration: 0.25), value: centerTop)
                 if let centerBottom {
                     Text(centerBottom)
                         .font(.system(size: size * 0.13))
                         .foregroundStyle(.secondary)
+                        .contentTransition(.numericText())
+                        .animation(.easeOut(duration: 0.25), value: centerBottom)
                 }
             }
         }
@@ -248,6 +293,93 @@ struct StatRow: View {
     }
 }
 
+/// A `StatRow` whose value is click-to-copy (feature #49): clicking copies it to
+/// the clipboard and flashes a transient checkmark beside it. Used for identity
+/// values (IP addresses, SSID, hostname, macOS version). The value is an AppKit
+/// button because a SwiftUI tap is swallowed by the card's reorder gesture.
+struct CopyableStatRow: View {
+    var label: String
+    var value: String
+    /// What actually gets copied, when it differs from the displayed value.
+    var copyText: String? = nil
+
+    // Plain State (not @State): the macro form needs the SwiftUIMacros plugin,
+    // which the Command Line Tools toolchain doesn't ship.
+    private var copied = State(initialValue: false)
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Text(label)
+                .font(.system(size: 11.5))
+                .foregroundStyle(.secondary)
+            Spacer(minLength: 12)
+            if copied.wrappedValue {
+                Image(systemName: "checkmark")
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundStyle(.green)
+                    .transition(.opacity.combined(with: .scale(scale: 0.6)))
+            }
+            CardValueButton(title: value, tooltip: "Click to copy") { copy() }
+        }
+    }
+
+    private func copy() {
+        let text = copyText ?? value
+        let pb = NSPasteboard.general
+        pb.clearContents()
+        pb.setString(text, forType: .string)
+        withAnimation(.easeOut(duration: 0.15)) { copied.wrappedValue = true }
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 1_100_000_000)
+            withAnimation(.easeIn(duration: 0.2)) { copied.wrappedValue = false }
+        }
+    }
+}
+
+/// A borderless AppKit button that renders an inline value (monospaced digits,
+/// matching `StatRow`'s value styling) and fires on click. Used by
+/// `CopyableStatRow` so the click survives the card's drag-to-reorder gesture.
+struct CardValueButton: NSViewRepresentable {
+    var title: String
+    var tooltip: String? = nil
+    var action: () -> Void
+
+    func makeNSView(context: Context) -> NSButton {
+        let button = NSButton()
+        button.isBordered = false
+        button.bezelStyle = .inline
+        button.imagePosition = .noImage
+        button.alignment = .right
+        button.target = context.coordinator
+        button.action = #selector(Coordinator.fire)
+        button.setContentHuggingPriority(.required, for: .horizontal)
+        button.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        apply(to: button)
+        return button
+    }
+
+    func updateNSView(_ nsView: NSButton, context: Context) {
+        context.coordinator.action = action
+        apply(to: nsView)
+    }
+
+    private func apply(to button: NSButton) {
+        button.attributedTitle = NSAttributedString(string: title, attributes: [
+            .font: NSFont.monospacedDigitSystemFont(ofSize: 11.5, weight: .medium),
+            .foregroundColor: NSColor.labelColor,
+        ])
+        button.toolTip = tooltip
+    }
+
+    func makeCoordinator() -> Coordinator { Coordinator(action: action) }
+
+    final class Coordinator: NSObject {
+        var action: () -> Void
+        init(action: @escaping () -> Void) { self.action = action }
+        @objc func fire() { action() }
+    }
+}
+
 // MARK: - AppKit card controls (shared)
 
 /// A bordered AppKit push button usable inside a dashboard card. A SwiftUI
@@ -288,6 +420,54 @@ struct CardPushButton: NSViewRepresentable {
             button.image = nil
             button.imagePosition = .noImage
         }
+    }
+
+    func makeCoordinator() -> Coordinator { Coordinator(action: action) }
+
+    final class Coordinator: NSObject {
+        var action: () -> Void
+        init(action: @escaping () -> Void) { self.action = action }
+        @objc func fire() { action() }
+    }
+}
+
+/// The AppKit-clickable card title row used by the collapsible cards (#48): a
+/// chevron plus the card title, styled to match the static title. NSButton for
+/// the same drag-gesture reason as `CardPushButton`.
+struct CardTitleToggle: NSViewRepresentable {
+    var title: String
+    var collapsed: Bool
+    var action: () -> Void
+
+    func makeNSView(context: Context) -> NSButton {
+        let button = NSButton()
+        button.isBordered = false
+        button.bezelStyle = .inline
+        button.imagePosition = .imageLeading
+        button.imageHugsTitle = true
+        button.alignment = .left
+        button.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 9, weight: .semibold)
+        button.target = context.coordinator
+        button.action = #selector(Coordinator.fire)
+        button.setContentHuggingPriority(.required, for: .horizontal)
+        apply(to: button)
+        return button
+    }
+
+    func updateNSView(_ nsView: NSButton, context: Context) {
+        context.coordinator.action = action
+        apply(to: nsView)
+    }
+
+    private func apply(to button: NSButton) {
+        button.image = NSImage(systemSymbolName: collapsed ? "chevron.right" : "chevron.down",
+                               accessibilityDescription: nil)
+        button.contentTintColor = .secondaryLabelColor
+        button.attributedTitle = NSAttributedString(string: "  " + title, attributes: [
+            .font: NSFont.systemFont(ofSize: 12, weight: .semibold),
+            .foregroundColor: NSColor.secondaryLabelColor,
+        ])
+        button.toolTip = collapsed ? "Expand card" : "Collapse card"
     }
 
     func makeCoordinator() -> Coordinator { Coordinator(action: action) }
@@ -356,6 +536,8 @@ struct ProgressBar: View {
                 Capsule()
                     .fill(color)
                     .frame(width: max(height, geo.size.width * min(max(fraction, 0), 1)))
+                    // Ease the fill between samples (#50), keyed to the value.
+                    .animation(.easeOut(duration: 0.25), value: fraction)
             }
         }
         .frame(height: height)

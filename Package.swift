@@ -26,6 +26,8 @@ let package = Package(
                 .linkedFramework("ServiceManagement"),
                 .linkedFramework("WidgetKit"),
                 .linkedFramework("UserNotifications"),
+                // Carbon RegisterEventHotKey for the global hotkey (feature #46).
+                .linkedFramework("Carbon"),
             ]
         ),
         .executableTarget(
