@@ -190,8 +190,67 @@ enum DumpRunner {
         dumpAlerts(sensors: s)
         dumpMenuBar(cpu: c, gpu: g, memory: m, network: n, sensors: s, battery: b)
         dumpPolish()
+        dumpWidgets()
 
         print("\nDone.")
+    }
+
+    /// Desktop widget upgrades + Focus/Gaming mode (Package 13, #41–#44). GUI
+    /// windows can't launch headlessly, so this exercises the pure pieces: theme
+    /// style resolution, the magnetic-snap math, the config/profile codecs, and
+    /// the Focus-mode detection heuristics.
+    private static func dumpWidgets() {
+        print("\n[Widgets] theme styles (frameless / material / opacity):")
+        for theme in WidgetTheme.allCases {
+            var cfg = DesktopWidgetConfig()
+            cfg.theme = theme
+            cfg.backgroundOpacity = 0.6
+            let st = cfg.style
+            print("          \(theme.title): frameless \(st.frameless)  material \(st.usesMaterial)"
+                + "  bg-opacity \(String(format: "%.1f", st.backgroundOpacity))  mono \(st.monospaced)"
+                + "  tint \(st.textTint == nil ? "—" : "green")")
+        }
+        print("          scale factors: " + WidgetScale.allCases
+            .map { "\($0.title)=\(String(format: "%.2f", $0.factor))" }.joined(separator: " "))
+
+        // Snapping: near-edge, far-edge and grid, plus a no-snap miss.
+        let guides: [CGFloat] = [0, 200, 508]
+        let cases: [(String, CGFloat, CGFloat)] = [
+            ("near edge → guide 200", 205, 100), // left edge 205 snaps to guide 200
+            ("far edge → guide 508", 405, 100),  // right edge 505 snaps to guide 508 → x 408
+            ("grid fallback", 41, 100),          // no guide near → nearest 8-grid = 40
+            ("grid fallback", 123, 100),         // no guide near → nearest 8-grid = 120
+        ]
+        print("          snap (guides \(guides.map { Int($0) })):")
+        for (name, value, extent) in cases {
+            let snapped = WidgetSnap.snap(value: value, extent: extent, lines: guides)
+            print("            \(name): \(Int(value)) → \(Int(snapped))")
+        }
+
+        // Config + profile persistence round-trip.
+        var cfg = DesktopWidgetConfig()
+        cfg.scale = .large; cfg.theme = .terminal; cfg.frameless = true; cfg.backgroundOpacity = 0.25
+        let profile = LayoutProfile(
+            name: "Desk", displaySignature: "69732096:3456x2234", autoSwitch: true,
+            enabled: [CardKind.cpu.rawValue, CardKind.memory.rawValue],
+            configs: [CardKind.cpu.rawValue: cfg],
+            frames: [CardKind.cpu.rawValue: WidgetFrame(relX: 40, relY: 80, width: 304, height: 210,
+                                                        displayID: 69732096)])
+        if let data = try? JSONEncoder().encode(profile),
+           let back = try? JSONDecoder().decode(LayoutProfile.self, from: data) {
+            print("          profile codec: \(back == profile ? "ok" : "MISMATCH") "
+                + "(\(back.enabled.count) widget(s), \(data.count) bytes, auto-switch \(back.autoSwitch))")
+        } else {
+            print("          profile codec: ENCODE/DECODE FAILED")
+        }
+
+        // Focus-mode detection heuristics (headless: no screens/frontmost app).
+        MainActor.assumeIsolated {
+            let full = FocusModeController.anyAppFullScreen()
+            let front = FocusModeController.chosenAppFrontmost(bundleID: "com.apple.dt.Xcode")
+            print("          focus heuristics: any-fullscreen \(full)  chosen-frontmost \(front)"
+                + "  focus-interval \(Int(FocusModeController.focusInterval))s")
+        }
     }
 
     /// Dashboard & popover polish (Package 12). Only the pure hotkey-formatting

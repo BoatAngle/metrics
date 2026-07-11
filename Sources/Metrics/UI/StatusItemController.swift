@@ -35,6 +35,8 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
         let hosting: NSHostingView<AnyView>
     }
     private var items: [String: Item] = [:]
+    /// The lone compact item shown while Focus/Gaming mode collapses the bar (#44).
+    private var focusItem: NSStatusItem?
     private var popover: NSPopover?
     private weak var popoverAnchor: NSStatusBarButton?
     private var clickMonitor: Any?
@@ -52,12 +54,27 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
         super.init()
         rebuildItems()
         observeSettings()
+        observeFocusMode()
         observeEngineForTooltips()
     }
 
     // MARK: Items
 
     private func rebuildItems() {
+        // Focus/Gaming mode (#44): collapse everything into one compact item.
+        if FocusModeController.shared.active {
+            for (id, entry) in items {
+                NSStatusBar.system.removeStatusItem(entry.statusItem)
+                items[id] = nil
+            }
+            if focusItem == nil { focusItem = makeFocusItem() }
+            return
+        }
+        if let existing = focusItem {
+            NSStatusBar.system.removeStatusItem(existing)
+            focusItem = nil
+        }
+
         var wanted = settings.widgetInstances
         if wanted.isEmpty { wanted = WidgetInstance.defaults } // never leave the app unreachable
 
@@ -99,6 +116,30 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
         return Item(instance: instance, statusItem: statusItem, hosting: hosting)
     }
 
+    /// The single compact item shown in Focus/Gaming mode. Clicking it (or
+    /// right-clicking for the menu) exits the mode and restores every item (#44).
+    private func makeFocusItem() -> NSStatusItem {
+        let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
+        if let button = item.button {
+            button.image = NSImage(systemSymbolName: "moon.zzz.fill",
+                                   accessibilityDescription: "Focus mode")
+            button.image?.isTemplate = true
+            button.toolTip = "Focus mode is on — click to restore Metrics"
+            button.target = self
+            button.action = #selector(handleFocusClick(_:))
+            button.sendAction(on: [.leftMouseUp, .rightMouseUp])
+        }
+        return item
+    }
+
+    @objc private func handleFocusClick(_ sender: NSStatusBarButton) {
+        if NSApp.currentEvent?.type == .rightMouseUp {
+            showContextMenu(from: sender)
+        } else {
+            FocusModeController.shared.toggle()
+        }
+    }
+
     /// Applies a changed configuration to a live item: new width and refreshed
     /// SwiftUI content, keeping the same NSStatusItem (and its menu bar slot).
     private func apply(_ instance: WidgetInstance, to entry: Item) {
@@ -125,6 +166,15 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
     private func observeSettings() {
         observeChanges { [weak self] in
             _ = self?.settings.widgetInstances
+        } perform: { [weak self] in
+            self?.rebuildItems()
+        }
+    }
+
+    /// Rebuilds the item set whenever Focus/Gaming mode toggles (#44).
+    private func observeFocusMode() {
+        observeChanges {
+            _ = FocusModeController.shared.active
         } perform: { [weak self] in
             self?.rebuildItems()
         }
@@ -218,6 +268,13 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
             arrangeItem.state = DesktopWidgetController.shared.arranging ? .on : .off
             menu.addItem(arrangeItem)
         }
+        // Focus/Gaming mode toggle (#44).
+        let focusItem = NSMenuItem(title: "Focus / Gaming Mode",
+                                   action: #selector(toggleFocusMode),
+                                   keyEquivalent: "")
+        focusItem.target = self
+        focusItem.state = FocusModeController.shared.active ? .on : .off
+        menu.addItem(focusItem)
         menu.addItem(.separator())
         menu.addItem(NSMenuItem(title: "Quit Metrics", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
         menu.popUp(positioning: nil, at: NSPoint(x: 0, y: button.bounds.height + 4), in: button)
@@ -233,6 +290,10 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
 
     @objc private func toggleArrangeWidgets() {
         DesktopWidgetController.shared.arranging.toggle()
+    }
+
+    @objc private func toggleFocusMode() {
+        FocusModeController.shared.toggle()
     }
 
     // MARK: Popover

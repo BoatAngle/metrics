@@ -121,6 +121,14 @@ private struct PersistedSettings: Codable {
     var dashboardHotkeyModifiers: Int? = nil
     var focusHotkeyKeyCode: Int? = nil
     var focusHotkeyModifiers: Int? = nil
+    /// Desktop widget upgrades (Package 13). Per-widget size/opacity/frameless/
+    /// theme (#41/#42, raw-value keyed), named layout profiles (#43), and the
+    /// Focus/Gaming mode auto-trigger settings (#44).
+    var desktopWidgetConfigs: [String: DesktopWidgetConfig]? = nil
+    var layoutProfiles: [LayoutProfile]? = nil
+    var focusAutoEnabled: Bool? = nil
+    var focusTrigger: String? = nil
+    var focusTriggerBundleID: String? = nil
 }
 
 // MARK: - Store
@@ -164,9 +172,18 @@ final class SettingsStore {
     var collapsedCards: Set<CardKind> { didSet { save() } }
     /// Global hotkey that toggles the menu-bar popover from anywhere (#46).
     var dashboardHotkey: HotkeyCenter.Binding? { didSet { save() } }
-    /// Seam hotkey for Package 13's Focus mode (#46). Registered here; the
-    /// action is a no-op until P13 wires it.
+    /// Global hotkey that toggles Focus/Gaming mode from anywhere (#44/#46).
     var focusHotkey: HotkeyCenter.Binding? { didSet { save() } }
+    /// Per-widget desktop-widget appearance: size/opacity/frameless/theme (#41/#42).
+    var desktopWidgetConfigs: [CardKind: DesktopWidgetConfig] { didSet { save() } }
+    /// Named layout profiles: positions + settings for every widget (#43).
+    var layoutProfiles: [LayoutProfile] { didSet { save() } }
+    /// Auto-arm Focus/Gaming mode from a system condition (#44).
+    var focusAutoEnabled: Bool { didSet { save() } }
+    /// Which condition auto-arms Focus mode when `focusAutoEnabled` is on (#44).
+    var focusTrigger: FocusTrigger { didSet { save() } }
+    /// The app bundle id watched by the `.frontmostApp` trigger (#44).
+    var focusTriggerBundleID: String? { didSet { save() } }
 
     /// Dashboard cards in display order with hidden ones filtered out.
     var visibleCards: [CardKind] {
@@ -192,6 +209,38 @@ final class SettingsStore {
     func toggleDesktopWidget(_ kind: CardKind) {
         if desktopWidgets.contains(kind) { desktopWidgets.remove(kind) }
         else { desktopWidgets.insert(kind) }
+    }
+
+    // MARK: Desktop widget config (Package 13, #41/#42)
+
+    /// The per-widget appearance config (falls back to defaults).
+    func desktopConfig(for kind: CardKind) -> DesktopWidgetConfig {
+        desktopWidgetConfigs[kind] ?? .default
+    }
+
+    /// Persists a per-widget config; a config equal to the default is dropped so
+    /// the JSON stays small.
+    func setDesktopConfig(_ config: DesktopWidgetConfig, for kind: CardKind) {
+        if config == .default { desktopWidgetConfigs[kind] = nil }
+        else { desktopWidgetConfigs[kind] = config }
+    }
+
+    // MARK: Layout profiles (Package 13, #43)
+
+    func addLayoutProfile(_ profile: LayoutProfile) {
+        layoutProfiles.append(profile)
+    }
+
+    func removeLayoutProfile(id: String) {
+        layoutProfiles.removeAll { $0.id == id }
+    }
+
+    /// Replaces a profile in place (reassigning the array so observers fire).
+    func updateLayoutProfile(_ profile: LayoutProfile) {
+        guard let idx = layoutProfiles.firstIndex(where: { $0.id == profile.id }) else { return }
+        var arr = layoutProfiles
+        arr[idx] = profile
+        layoutProfiles = arr
     }
 
     /// The chart window a card is showing (defaults to Live).
@@ -296,6 +345,13 @@ final class SettingsStore {
         } else {
             focusHotkey = nil
         }
+        desktopWidgetConfigs = (p.desktopWidgetConfigs ?? [:]).reduce(into: [:]) { result, pair in
+            if let kind = CardKind(rawValue: pair.key) { result[kind] = pair.value }
+        }
+        layoutProfiles = p.layoutProfiles ?? []
+        focusAutoEnabled = p.focusAutoEnabled ?? false
+        focusTrigger = p.focusTrigger.flatMap { FocusTrigger(rawValue: $0) } ?? .fullScreen
+        focusTriggerBundleID = p.focusTriggerBundleID
         loaded = true
     }
 
@@ -330,7 +386,14 @@ final class SettingsStore {
                                   dashboardHotkeyKeyCode: dashboardHotkey?.keyCode,
                                   dashboardHotkeyModifiers: dashboardHotkey?.modifiers,
                                   focusHotkeyKeyCode: focusHotkey?.keyCode,
-                                  focusHotkeyModifiers: focusHotkey?.modifiers)
+                                  focusHotkeyModifiers: focusHotkey?.modifiers,
+                                  desktopWidgetConfigs: desktopWidgetConfigs.reduce(into: [:]) { result, pair in
+                                      result[pair.key.rawValue] = pair.value
+                                  },
+                                  layoutProfiles: layoutProfiles,
+                                  focusAutoEnabled: focusAutoEnabled,
+                                  focusTrigger: focusTrigger.rawValue,
+                                  focusTriggerBundleID: focusTriggerBundleID)
         if let data = try? JSONEncoder().encode(p) {
             UserDefaults.standard.set(data, forKey: Self.key)
         }

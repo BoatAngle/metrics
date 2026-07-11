@@ -7,6 +7,11 @@ struct SettingsView: View {
     @Environment(MetricsEngine.self) private var engine
     @Environment(SettingsStore.self) private var settings
 
+    // Plain State (not @State): the macro form needs the SwiftUIMacros plugin,
+    // which the Command Line Tools toolchain doesn't ship.
+    /// The name being typed for a new layout profile (#43).
+    private var newProfileName = State(initialValue: "")
+
     var body: some View {
         TabView {
             generalTab
@@ -83,7 +88,7 @@ struct SettingsView: View {
             } header: {
                 Text("Global shortcuts")
             } footer: {
-                Text("System-wide hotkeys, active from any app. “Toggle dashboard” shows or hides the menu-bar popover; “Focus mode” is reserved for an upcoming feature. Default: none.")
+                Text("System-wide hotkeys, active from any app. “Toggle dashboard” shows or hides the menu-bar popover; “Focus mode” toggles Focus / Gaming mode (Widgets tab). Default: none.")
             }
         }
         .formStyle(.grouped)
@@ -178,6 +183,10 @@ struct SettingsView: View {
 
     // MARK: - Widgets
 
+    private var enabledWidgetKinds: [CardKind] {
+        CardKind.allCases.filter { $0 != .fans && settings.desktopWidgets.contains($0) }
+    }
+
     private var widgetsTab: some View {
         Form {
             Section {
@@ -187,14 +196,184 @@ struct SettingsView: View {
             } footer: {
                 Text("Widgets float on your desktop and update in real time. Cards for hardware this Mac doesn't have stay invisible.")
             }
+
+            if !enabledWidgetKinds.isEmpty {
+                Section {
+                    ForEach(enabledWidgetKinds) { kind in
+                        DisclosureGroup(kind.title) { widgetAppearanceControls(for: kind) }
+                    }
+                } header: {
+                    Text("Widget appearance")
+                } footer: {
+                    Text("Size, background opacity, a frameless look, and a per-widget theme — independent of the app's light/dark appearance.")
+                }
+            }
+
             Section {
                 Toggle("Arrange widgets", isOn: arrangeBinding)
                     .disabled(settings.desktopWidgets.isEmpty)
             } footer: {
-                Text("The desktop layer ignores clicks, so widgets can't be dragged in place. While arranging, they float above your windows — drag them where you want, then turn this off to pin them back onto the desktop. Positions are remembered.")
+                Text("The desktop layer ignores clicks, so widgets can't be dragged in place. While arranging, they float above your windows and snap to an 8-pt grid and to each other's edges — drag them where you want, then use the floating “Done” pill (or turn this off) to pin them back onto the desktop.")
             }
+
+            layoutProfilesSection
+            focusModeSection
         }
         .formStyle(.grouped)
+    }
+
+    // MARK: Widget appearance (#41/#42)
+
+    @ViewBuilder private func widgetAppearanceControls(for kind: CardKind) -> some View {
+        Picker("Size", selection: configBinding(for: kind, \.scale)) {
+            ForEach(WidgetScale.allCases) { Text($0.title).tag($0) }
+        }
+        .pickerStyle(.segmented)
+
+        LabeledContent {
+            Slider(value: configBinding(for: kind, \.backgroundOpacity), in: 0...1)
+        } label: {
+            Text("Background")
+            Text("\(Int((settings.desktopConfig(for: kind).backgroundOpacity * 100).rounded()))%")
+        }
+
+        Toggle("Frameless", isOn: configBinding(for: kind, \.frameless))
+
+        Picker("Theme", selection: configBinding(for: kind, \.theme)) {
+            ForEach(WidgetTheme.allCases) { Text($0.title).tag($0) }
+        }
+    }
+
+    /// Generic read/write binding into one field of a widget's config.
+    private func configBinding<T>(for kind: CardKind,
+                                  _ keyPath: WritableKeyPath<DesktopWidgetConfig, T>) -> Binding<T> {
+        Binding(
+            get: { settings.desktopConfig(for: kind)[keyPath: keyPath] },
+            set: { newValue in
+                var cfg = settings.desktopConfig(for: kind)
+                cfg[keyPath: keyPath] = newValue
+                settings.setDesktopConfig(cfg, for: kind)
+            }
+        )
+    }
+
+    // MARK: Layout profiles (#43)
+
+    private var layoutProfilesSection: some View {
+        Section {
+            ForEach(settings.layoutProfiles) { profile in
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack {
+                        Text(profile.name).fontWeight(.medium)
+                        Spacer()
+                        Button("Restore") { DesktopWidgetController.shared.applyProfile(profile) }
+                            .controlSize(.small)
+                        Button(role: .destructive) {
+                            settings.removeLayoutProfile(id: profile.id)
+                        } label: { Image(systemName: "trash") }
+                            .controlSize(.small)
+                    }
+                    Toggle("Auto-switch when this display setup returns",
+                           isOn: autoSwitchBinding(for: profile))
+                        .font(.system(size: 11))
+                        .controlSize(.small)
+                }
+                .padding(.vertical, 2)
+            }
+            HStack {
+                TextField("New layout name", text: newProfileName.projectedValue)
+                Button("Save current layout") { saveCurrentLayout() }
+                    .disabled(settings.desktopWidgets.isEmpty)
+            }
+        } header: {
+            Text("Layout profiles")
+        } footer: {
+            Text("Save every widget's position and settings as a named layout (e.g. “Desk”, “Laptop”). A profile remembers the monitor arrangement it was saved under; enable auto-switch to restore it automatically when that arrangement returns.")
+        }
+    }
+
+    private func autoSwitchBinding(for profile: LayoutProfile) -> Binding<Bool> {
+        Binding(
+            get: { profile.autoSwitch },
+            set: { on in
+                var p = profile
+                p.autoSwitch = on
+                settings.updateLayoutProfile(p)
+            }
+        )
+    }
+
+    private func saveCurrentLayout() {
+        let trimmed = newProfileName.wrappedValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        let name = trimmed.isEmpty ? "Layout \(settings.layoutProfiles.count + 1)" : trimmed
+        let profile = DesktopWidgetController.shared.captureProfile(named: name, autoSwitch: false)
+        settings.addLayoutProfile(profile)
+        newProfileName.wrappedValue = ""
+    }
+
+    // MARK: Focus / Gaming mode (#44)
+
+    private var focusModeSection: some View {
+        Section {
+            Toggle("Focus / Gaming mode", isOn: focusActiveBinding)
+            Toggle("Auto-enable on a system condition", isOn: focusAutoEnabledBinding)
+            if settings.focusAutoEnabled {
+                Picker("When", selection: focusTriggerBinding) {
+                    ForEach(FocusTrigger.allCases) { Text($0.title).tag($0) }
+                }
+                if settings.focusTrigger == .frontmostApp {
+                    Picker("App", selection: focusAppBinding) {
+                        Text("Choose an app…").tag("")
+                        ForEach(runningAppChoices, id: \.bundleID) { choice in
+                            Text(choice.name).tag(choice.bundleID)
+                        }
+                    }
+                }
+            }
+        } header: {
+            Text("Focus / Gaming mode")
+        } footer: {
+            Text("Collapses every Metrics menu-bar item into one icon, hides all desktop widgets, and slows sampling to 5 s. Turn it off (click the icon, use the shortcut in General, or this switch) to restore everything exactly. Auto-enable arms it when a full-screen app appears or your chosen app comes to the front.")
+        }
+    }
+
+    private var focusActiveBinding: Binding<Bool> {
+        Binding(
+            get: { FocusModeController.shared.active },
+            set: { FocusModeController.shared.setActive($0) }
+        )
+    }
+
+    private var focusAutoEnabledBinding: Binding<Bool> {
+        Binding(get: { settings.focusAutoEnabled }, set: { settings.focusAutoEnabled = $0 })
+    }
+
+    private var focusTriggerBinding: Binding<FocusTrigger> {
+        Binding(get: { settings.focusTrigger }, set: { settings.focusTrigger = $0 })
+    }
+
+    private var focusAppBinding: Binding<String> {
+        Binding(
+            get: { settings.focusTriggerBundleID ?? "" },
+            set: { settings.focusTriggerBundleID = $0.isEmpty ? nil : $0 }
+        )
+    }
+
+    /// Running regular apps offered by the frontmost-app trigger picker, plus
+    /// the stored choice even if it isn't currently running.
+    private var runningAppChoices: [(name: String, bundleID: String)] {
+        var seen = Set<String>()
+        var result: [(name: String, bundleID: String)] = []
+        for app in NSWorkspace.shared.runningApplications where app.activationPolicy == .regular {
+            guard let id = app.bundleIdentifier, let name = app.localizedName,
+                  !seen.contains(id) else { continue }
+            seen.insert(id)
+            result.append((name, id))
+        }
+        if let stored = settings.focusTriggerBundleID, !stored.isEmpty, !seen.contains(stored) {
+            result.append((stored, stored))
+        }
+        return result.sorted { $0.name.lowercased() < $1.name.lowercased() }
     }
 
     private var arrangeBinding: Binding<Bool> {

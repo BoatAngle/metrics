@@ -77,6 +77,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         AlertEngine.shared.load()
         FanControl.shared.engagePersistedModeAtLaunch()
         DesktopWidgetController.shared.start()
+        // Focus/Gaming mode (#44): begins watching the optional auto-trigger.
+        FocusModeController.shared.start()
         // Control socket for the metricsctl CLI (Package 9). Best-effort: the
         // app runs fine without it.
         MetricsControlServer.shared.start(source: LiveControlSource())
@@ -120,7 +122,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             self?.statusController?.toggleFromHotkey()
         }
         HotkeyCenter.shared.setBinding(settings.focusHotkey, for: .focusMode) {
-            NSLog("Metrics: Focus-mode hotkey pressed — in-app Focus mode not implemented yet (P13).")
+            FocusModeController.shared.toggle()
         }
     }
 
@@ -175,10 +177,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             FanControl.shared.mode = mode
 
         case .focus(let action):
-            // Clean seam for a future in-app Focus mode (package P13). No such
-            // mode exists yet, so log and no-op rather than pretend.
-            NSLog("Metrics: focus/%@ requested — in-app Focus mode not implemented yet; ignoring.",
-                  action.rawValue)
+            // Focus/Gaming mode (#44).
+            switch action {
+            case .on: FocusModeController.shared.setActive(true)
+            case .off: FocusModeController.shared.setActive(false)
+            case .toggle: FocusModeController.shared.toggle()
+            }
 
         case .copy(let metric):
             guard let value = MetricReadout.value(metric, engine: .shared, settings: SettingsStore.shared) else {

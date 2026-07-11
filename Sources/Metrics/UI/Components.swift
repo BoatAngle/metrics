@@ -15,6 +15,9 @@ struct CardContainer<Content: View>: View {
     /// Injected by `MetricCardView` in the dashboard/popover (#48). Absent in
     /// desktop widgets and previews, where the header stays static.
     @Environment(\.cardCollapse) private var collapse
+    /// Injected only when the card renders inside a desktop widget (#42): drives
+    /// the theme's background, chrome and text tint.
+    @Environment(\.desktopWidgetStyle) private var widgetStyle
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -25,15 +28,44 @@ struct CardContainer<Content: View>: View {
         }
         .padding(12)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(
+        // Frameless/minimal float on the wallpaper: a soft shadow keeps the
+        // text legible without any card chrome behind it.
+        .shadow(color: .black.opacity((widgetStyle?.needsLegibilityShadow ?? false) ? 0.55 : 0),
+                radius: (widgetStyle?.needsLegibilityShadow ?? false) ? 1.5 : 0, y: 0.5)
+        .background(cardBackground)
+        .overlay(cardBorder)
+    }
+
+    /// The card's fill: standard control background in the dashboard, or the
+    /// widget theme's fill/material when rendered as a desktop widget (#42).
+    @ViewBuilder private var cardBackground: some View {
+        if let style = widgetStyle {
+            if style.usesMaterial {
+                RoundedRectangle(cornerRadius: 11, style: .continuous)
+                    .fill(.ultraThinMaterial)
+                    .opacity(style.backgroundOpacity)
+            } else if let fill = style.backgroundColor {
+                RoundedRectangle(cornerRadius: 11, style: .continuous).fill(fill)
+            } else {
+                Color.clear // frameless / minimal
+            }
+        } else {
             RoundedRectangle(cornerRadius: 11, style: .continuous)
                 .fill(Color(nsColor: .controlBackgroundColor))
                 .shadow(color: .black.opacity(0.05), radius: 2, y: 1)
-        )
-        .overlay(
+        }
+    }
+
+    @ViewBuilder private var cardBorder: some View {
+        if let style = widgetStyle {
+            if style.drawsBorder {
+                RoundedRectangle(cornerRadius: 11, style: .continuous)
+                    .strokeBorder(style.borderColor, lineWidth: 1)
+            }
+        } else {
             RoundedRectangle(cornerRadius: 11, style: .continuous)
                 .strokeBorder(Color(nsColor: .separatorColor).opacity(0.6), lineWidth: 1)
-        )
+        }
     }
 
     @ViewBuilder private var header: some View {
@@ -64,13 +96,15 @@ struct CardContainer<Content: View>: View {
         } else {
             HStack(alignment: .firstTextBaseline, spacing: 6) {
                 Text(title)
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(.secondary)
+                    .font(.system(size: 12, weight: .semibold,
+                                  design: (widgetStyle?.monospaced ?? false) ? .monospaced : .default))
+                    .foregroundStyle(widgetStyle?.textTint ?? Color.secondary)
                 Spacer()
                 if let subtitle {
                     Text(subtitle)
-                        .font(.system(size: 11))
-                        .foregroundStyle(.tertiary)
+                        .font(.system(size: 11,
+                                      design: (widgetStyle?.monospaced ?? false) ? .monospaced : .default))
+                        .foregroundStyle(widgetStyle?.textTint?.opacity(0.8) ?? Color(nsColor: .tertiaryLabelColor))
                 }
                 if let titleAccessory {
                     titleAccessory
@@ -90,28 +124,34 @@ struct DonutGauge: View {
     var centerTop: String
     var centerBottom: String? = nil
 
+    /// Non-nil only inside a desktop widget (#42); the Terminal theme recolors
+    /// the arc and center text green.
+    @Environment(\.desktopWidgetStyle) private var widgetStyle
+
     var body: some View {
         // Ease the arc and roll the numbers between samples (#50). Keyed to the
         // value itself, so it only animates on a fresh reading — nothing runs
         // every frame.
         let clamped = min(max(fraction, 0), 1)
+        let arc = widgetStyle?.textTint ?? color
         return ZStack {
-            Circle().stroke(color.opacity(0.15), lineWidth: lineWidth)
+            Circle().stroke(arc.opacity(0.15), lineWidth: lineWidth)
             Circle()
                 .trim(from: 0, to: clamped)
-                .stroke(color, style: StrokeStyle(lineWidth: lineWidth, lineCap: .round))
+                .stroke(arc, style: StrokeStyle(lineWidth: lineWidth, lineCap: .round))
                 .rotationEffect(.degrees(-90))
                 .animation(.easeOut(duration: 0.25), value: clamped)
             VStack(spacing: 0) {
                 Text(centerTop)
                     .font(.system(size: size * 0.22, weight: .semibold))
                     .monospacedDigit()
+                    .foregroundStyle(widgetStyle?.textTint ?? Color.primary)
                     .contentTransition(.numericText())
                     .animation(.easeOut(duration: 0.25), value: centerTop)
                 if let centerBottom {
                     Text(centerBottom)
                         .font(.system(size: size * 0.13))
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(widgetStyle?.textTint ?? Color.secondary)
                         .contentTransition(.numericText())
                         .animation(.easeOut(duration: 0.25), value: centerBottom)
                 }
@@ -277,18 +317,25 @@ struct StatRow: View {
     var value: String
     var dotColor: Color? = nil
 
+    /// Non-nil only inside a desktop widget (#42); tints/mono-fonts the row for
+    /// the Terminal theme.
+    @Environment(\.desktopWidgetStyle) private var widgetStyle
+
+    private var mono: Bool { widgetStyle?.monospaced ?? false }
+
     var body: some View {
         HStack(spacing: 6) {
             if let dotColor {
-                Circle().fill(dotColor).frame(width: 7, height: 7)
+                Circle().fill(widgetStyle?.textTint ?? dotColor).frame(width: 7, height: 7)
             }
             Text(label)
-                .font(.system(size: 11.5))
-                .foregroundStyle(.secondary)
+                .font(.system(size: 11.5, design: mono ? .monospaced : .default))
+                .foregroundStyle(widgetStyle?.textTint ?? Color.secondary)
             Spacer(minLength: 12)
             Text(value)
-                .font(.system(size: 11.5, weight: .medium))
+                .font(.system(size: 11.5, weight: .medium, design: mono ? .monospaced : .default))
                 .monospacedDigit()
+                .foregroundStyle(widgetStyle?.textTint ?? Color.primary)
         }
     }
 }
@@ -529,12 +576,16 @@ struct ProgressBar: View {
     var color: Color = .accentColor
     var height: CGFloat = 5
 
+    /// Non-nil only inside a desktop widget (#42): Terminal recolors the fill.
+    @Environment(\.desktopWidgetStyle) private var widgetStyle
+
     var body: some View {
-        GeometryReader { geo in
+        let fill = widgetStyle?.textTint ?? color
+        return GeometryReader { geo in
             ZStack(alignment: .leading) {
-                Capsule().fill(color.opacity(0.15))
+                Capsule().fill(fill.opacity(0.15))
                 Capsule()
-                    .fill(color)
+                    .fill(fill)
                     .frame(width: max(height, geo.size.width * min(max(fraction, 0), 1)))
                     // Ease the fill between samples (#50), keyed to the value.
                     .animation(.easeOut(duration: 0.25), value: fraction)
