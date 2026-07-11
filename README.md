@@ -1,82 +1,86 @@
+<div align="center">
+
+<img src="docs/icon.png" width="128" alt="Metrics app icon">
+
 # Metrics
 
-A personal, free macOS menu bar system monitor — a from-scratch rebuild of the parts of
-"Usage" worth keeping, with every formerly-Pro feature unlocked and nothing phoning home.
+**A free, open macOS system monitor that lives in your menu bar.**
+
+CPU, GPU, memory, disk, network, battery, temperatures, and real fan control —
+in a glanceable menu bar, a full dashboard, and live desktop widgets.
+No accounts, no tracking, nothing phones home.
+
+### [⬇︎ Download the latest version](https://github.com/BoatAngle/metrics/releases/latest)
+
+</div>
+
+---
+
+## Install
+
+1. **Download** [`Metrics.dmg`](https://github.com/BoatAngle/metrics/releases/latest) and open it.
+2. **Drag `Metrics` onto the `Applications` folder** in the window that appears.
+3. **Open it.** The first time, macOS blocks apps from outside the App Store:
+   - Double-click Metrics — you'll see a message that it can't be opened.
+   - Open **System Settings → Privacy & Security**, scroll down, and click
+     **"Open Anyway"** next to the Metrics message. Confirm with Touch ID or your password.
+   - That's a one-time step — after that it opens normally.
+
+> **Why the extra step?** This build isn't yet notarized by Apple (that needs a
+> paid developer account). "Open Anyway" tells macOS you trust it. A notarized
+> build — which opens with no warning at all — will replace this download once
+> code signing is in place.
+
+Metrics runs in your menu bar. Click any menu bar item for the dashboard;
+right-click it for Settings and Quit.
 
 ## Features
 
-- **Menu bar widgets** (pick which ones in Settings): CPU %, CPU graph, GPU %,
-  GPU graph, memory %, memory graph, network ↓/↑ speeds, disk used, battery,
-  and combined CPU+GPU temperatures. Graphs are color-matched to their cards
-  (green/orange/indigo). Fixed widths, so the menu bar never shifts as values
-  update.
-- **Dashboard popover** (click any widget): reorderable cards for Processor, Graphics
-  (GPU utilization), Memory,
-  Disk + volumes, Network Activity, Network Data (today / yesterday / 7d / 30d),
-  Battery (incl. health, cycles, W/A/V), Sensors (temps + fans via in-process SMC —
-  no privileged helper), top Processes, Bluetooth device batteries, and Device info.
-- **Fan control** (Settings → Fans): five modes — Auto (Apple's curve), Quiet,
-  Balanced, and Performance (temperature-driven curves that react later/sooner
-  than Apple's default; the app polls CPU/GPU temps every 5 s and retargets the
-  fans along the selected curve), plus Manual (fixed RPM per fan). Writing fan
-  speeds needs root, so a tiny setuid helper (`metrics-fan-helper`, its own
-  SwiftPM target) is installed once via an admin prompt to
-  `/Library/Application Support/Metrics/`. Safety: targets are clamped to each
-  fan's SMC min/max, every curve goes full speed at ≥95 °C, lost sensors or
-  repeated write failures revert to Auto, and quitting the app always returns
-  the fans to Apple's control.
-- **Fan Control card** on the dashboard itself: mode picker, live curve status,
-  manual sliders, and a warning when another fan controller (e.g. Macs Fan
-  Control) is running.
-- **Drag-and-drop card reordering** in the dashboard window and popover (plus
-  chevrons / drag in Settings → Dashboard); order persists everywhere.
-- **Desktop widgets** (Settings → Widgets): float any card on the desktop —
-  above the wallpaper, below your windows — updating every second (real-time,
-  unlike WidgetKit). The desktop layer is click-through, so use "Arrange
-  widgets" (also in the menu bar right-click menu) to float them for
-  repositioning; adding a widget auto-enters arrange mode.
-- **Apple widget gallery** (WidgetKit): a hand-assembled `MetricsWidgets.appex`
-  (built with plain SwiftPM — no Xcode) ships three widgets (System, Battery,
-  Network) for macOS's own widget gallery. The app snapshots data every 30 s;
-  WidgetKit refreshes on Apple's budgeted schedule (~15 min), so these show
-  "as of" timestamps — for true real-time, use the desktop widgets above.
-- **Settings**: launch at login, sampling interval, °C/°F, appearance
-  (System/Light/Dark for the dashboard + settings window), menu bar widget picker,
-  dashboard card order/visibility.
+- **Menu bar widgets** you choose: CPU %, GPU %, memory, network ↓/↑ speeds,
+  disk, battery, CPU+GPU temperature, and live mini-graphs. Fixed widths, so the
+  menu bar never jumps around as numbers change.
+- **Dashboard** (a window *and* a popover) with reorderable cards: Processor,
+  Graphics, Memory, Disk + volumes, Network activity, Network data history
+  (today / yesterday / 7d / 30d), Battery (health, cycles, watts/volts/amps),
+  Sensors (temperatures + fans), top Processes, Bluetooth device batteries, and
+  Device info. Drag cards to rearrange; light / dark / system appearance.
+- **Fan control** — five modes: Auto (Apple's curve), Quiet, Balanced,
+  Performance (temperature-driven curves that ramp sooner than Apple's default),
+  and Manual (set exact RPM). Speeds are clamped to each fan's safe range, every
+  curve goes full-speed if things get hot, and your fans always return to
+  automatic when you quit.
+- **Desktop widgets** — float any card right on your desktop, updating every
+  second in real time.
+- **Apple widget gallery** — System, Battery, and Network widgets for macOS's
+  own widget gallery too.
+
+## About fan control
+
+Changing fan speeds requires administrator access (macOS doesn't allow apps to
+control hardware directly), so Metrics installs a small helper the first time you
+switch to a manual or curve mode — it'll ask for your password once. Your fans
+always return to Apple's automatic control when you quit the app. If you also run
+another fan app like Macs Fan Control, quit it first so they don't fight.
 
 ## Compatibility
 
-- **macOS 14 Sonoma or later** (uses the Observation framework). Earlier macOS won't run it.
-- **Universal binary** — Apple Silicon and Intel.
-- Hardware-adaptive: cards/features for hardware a Mac lacks (battery, fans,
-  Bluetooth batteries, GPU sensors) hide themselves. SMC sensor/fan key schemes
-  are handled for Apple Silicon (`Tp*`/`Tg*`, lowercase `F0md` on M5-era) and
-  Intel (`TC0P`, `F0Md`, `FS! ` bitmask, `fpe2`); only the M5 Max path is
-  machine-verified — others are best-effort with graceful degradation.
+- **macOS 14 Sonoma or later.**
+- **Universal** — works on both Apple Silicon and Intel Macs.
+- Adapts to your hardware: cards for things your Mac doesn't have (a battery on a
+  desktop, fans on a MacBook Air, etc.) simply hide themselves.
 
-## Build & run
+## Build from source
 
-Requires only Command Line Tools (no Xcode):
+Requires the Xcode Command Line Tools (no full Xcode needed):
 
 ```sh
-./build.sh --install      # release build → replaces /Applications/Metrics.app and relaunches
-./build.sh --run          # release build → build/Metrics.app, then launches it
-./build.sh debug          # debug build
-swift run Metrics --dump  # one-shot sampler dump to stdout (no GUI) — handy sanity check
-
-# The installed fan helper doubles as a debug CLI (status needs no root):
-"/Library/Application Support/Metrics/metrics-fan-helper" status
+git clone https://github.com/BoatAngle/metrics.git
+cd metrics
+./build.sh --run          # build a release and launch it
+./build.sh --install      # build and install into /Applications
+swift run Metrics --dump  # print one sample of every metric to the terminal
 ```
 
-To keep it around, drag `build/Metrics.app` into `/Applications` (launch-at-login is
-more reliable from there).
+## License
 
-## Layout
-
-- `Sources/Metrics/Models.swift` — snapshot types for every metric
-- `Sources/Metrics/MetricsEngine.swift` — 1 s sampling loop + history ring buffers
-- `Sources/Metrics/Samplers/` — one reader per subsystem (CPU, memory, SMC, …)
-- `Sources/Metrics/UI/` — status items, dashboard cards, settings window
-- `build.sh` — SwiftPM build + .app bundle assembly + ad-hoc codesign
-
-Personal use only; not for distribution.
+Free and open. Use it, fork it, tinker with it.
