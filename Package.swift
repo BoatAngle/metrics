@@ -21,6 +21,7 @@ let package = Package(
                 .linkedLibrary("sqlite3"),
                 .linkedFramework("IOKit"),
                 .linkedFramework("CoreWLAN"),
+                .linkedFramework("Network"),
                 .linkedFramework("SystemConfiguration"),
                 .linkedFramework("ServiceManagement"),
                 .linkedFramework("WidgetKit"),

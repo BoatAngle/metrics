@@ -93,6 +93,10 @@ private struct PersistedSettings: Codable {
     /// CardKind.rawValue → ChartWindow.rawValue. Plain string keys keep the
     /// JSON a normal object (and avoid non-String dictionary-key encoding).
     var cardChartWindows: [String: String]? = nil
+    /// Network billing cycle (feature #28): the day-of-month (1…31) the cycle
+    /// resets on, and an optional data cap in GB (nil = no cap).
+    var billingCycleStartDay: Int? = nil
+    var monthlyDataCapGB: Double? = nil
 }
 
 // MARK: - Store
@@ -116,6 +120,10 @@ final class SettingsStore {
     var desktopWidgets: Set<CardKind> { didSet { save() } }
     /// Selected history window per live-graph card (CardKind → ChartWindow).
     var cardChartWindows: [CardKind: ChartWindow] { didSet { save() } }
+    /// Day of the month (1…31) the data billing cycle resets on.
+    var billingCycleStartDay: Int { didSet { save() } }
+    /// Optional monthly data cap in GB (nil = no cap).
+    var monthlyDataCapGB: Double? { didSet { save() } }
 
     /// Dashboard cards in display order with hidden ones filtered out.
     var visibleCards: [CardKind] {
@@ -158,6 +166,8 @@ final class SettingsStore {
                 result[kind] = window
             }
         }
+        billingCycleStartDay = min(max(p.billingCycleStartDay ?? 1, 1), 31)
+        monthlyDataCapGB = p.monthlyDataCapGB.map { max(0, $0) }
         loaded = true
     }
 
@@ -173,7 +183,9 @@ final class SettingsStore {
                                   desktopWidgets: Array(desktopWidgets),
                                   cardChartWindows: cardChartWindows.reduce(into: [:]) { result, pair in
                                       result[pair.key.rawValue] = pair.value.rawValue
-                                  })
+                                  },
+                                  billingCycleStartDay: billingCycleStartDay,
+                                  monthlyDataCapGB: monthlyDataCapGB)
         if let data = try? JSONEncoder().encode(p) {
             UserDefaults.standard.set(data, forKey: Self.key)
         }

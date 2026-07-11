@@ -84,9 +84,11 @@ final class NetworkSampler {
         previousTime = now
 
         if let primary {
-            if let wifi = CWWiFiClient.shared().interface(withName: primary) {
+            if let interface = CWWiFiClient.shared().interface(withName: primary) {
                 snapshot.connection = .wifi
-                snapshot.ssid = wifi.ssid()
+                let wifi = Self.readWiFi(interface)
+                snapshot.wifi = wifi
+                snapshot.ssid = wifi.ssid
             } else if primary.hasPrefix("en") {
                 snapshot.connection = .ethernet
             } else {
@@ -97,6 +99,46 @@ final class NetworkSampler {
         }
 
         return snapshot
+    }
+
+    /// Snapshots a Wi-Fi link's CoreWLAN properties into a plain `WiFiInfo`.
+    /// SSID/BSSID are nil without Location permission even while associated, so
+    /// association is inferred from the channel/RSSI and reported as "hidden".
+    private static func readWiFi(_ interface: CWInterface) -> WiFiInfo {
+        var info = WiFiInfo()
+        let rssi = interface.rssiValue()
+        let channel = interface.wlanChannel()
+        let associated = channel != nil || rssi != 0
+
+        info.ssid = interface.ssid()
+        info.bssid = interface.bssid()
+        info.ssidHidden = associated && info.ssid == nil
+
+        if rssi != 0 { info.rssi = rssi }
+        let noise = interface.noiseMeasurement()
+        if noise != 0 { info.noise = noise }
+        if let r = info.rssi, let n = info.noise { info.snr = r - n }
+
+        let rate = interface.transmitRate()
+        if rate > 0 { info.txRateMbps = rate }
+
+        if let channel {
+            info.channel = channel.channelNumber
+            switch channel.channelBand {
+            case .band2GHz: info.band = "2.4 GHz"
+            case .band5GHz: info.band = "5 GHz"
+            case .band6GHz: info.band = "6 GHz"
+            @unknown default: info.band = nil
+            }
+            switch channel.channelWidth {
+            case .width20MHz: info.channelWidth = "20 MHz"
+            case .width40MHz: info.channelWidth = "40 MHz"
+            case .width80MHz: info.channelWidth = "80 MHz"
+            case .width160MHz: info.channelWidth = "160 MHz"
+            @unknown default: info.channelWidth = nil
+            }
+        }
+        return info
     }
 
     private func primaryInterfaceName() -> String? {

@@ -100,6 +100,10 @@ final class SamplerLoop {
 final class MetricsEngine {
     static let shared = MetricsEngine()
     private let loop = SamplerLoop()
+    /// Long-lived, event-driven monitors that live outside the sampler tick so
+    /// changing the sampling interval doesn't restart their subprocesses.
+    private let networkAppMonitor = NetworkAppMonitor()
+    private let connectivityMonitor = ConnectivityMonitor()
 
     private(set) var cpu = CPUSnapshot.empty
     private(set) var gpu = GPUSnapshot.empty
@@ -115,6 +119,10 @@ final class MetricsEngine {
     private(set) var bluetooth: [BluetoothDeviceSample] = []
     private(set) var device = DeviceSnapshot.empty
     private(set) var networkData = NetworkDataSnapshot.empty
+    /// Top network-using apps (feature #3), refreshed by the nettop monitor.
+    private(set) var topNetworkApps: [AppNetworkUsage] = []
+    /// Live connectivity + outage log (feature #9).
+    private(set) var connectivity = ConnectivitySnapshot.empty
 
     private(set) var cpuHistory = RingBuffer(capacity: 120)
     private(set) var gpuHistory = RingBuffer(capacity: 120)
@@ -122,6 +130,8 @@ final class MetricsEngine {
     private(set) var memoryHistory = RingBuffer(capacity: 120)
     private(set) var downHistory = RingBuffer(capacity: 120)
     private(set) var upHistory = RingBuffer(capacity: 120)
+    /// Wi-Fi signal (dBm) for the Network card's RSSI sparkline (feature #8).
+    private(set) var rssiHistory = RingBuffer(capacity: 120)
     private(set) var diskReadHistory = RingBuffer(capacity: 120)
     private(set) var diskWriteHistory = RingBuffer(capacity: 120)
     /// Hottest CPU/GPU reading, in °C. Sampled on the sensor cadence (every
@@ -148,6 +158,22 @@ final class MetricsEngine {
         loop.stop()
     }
 
+    /// Starts the event-driven monitors once, at launch. Kept separate from
+    /// `start(interval:)` so a sampling-interval change never restarts them.
+    func startMonitors() {
+        networkAppMonitor.start { [weak self] apps in
+            Task { @MainActor in self?.topNetworkApps = apps }
+        }
+        connectivityMonitor.start { [weak self] snapshot in
+            Task { @MainActor in self?.connectivity = snapshot }
+        }
+    }
+
+    func stopMonitors() {
+        networkAppMonitor.stop()
+        connectivityMonitor.stop()
+    }
+
     private func apply(_ b: SampleBundle) {
         if let v = b.cpu {
             cpu = v
@@ -169,6 +195,7 @@ final class MetricsEngine {
             network = v
             downHistory.append(v.downBytesPerSec)
             upHistory.append(v.upBytesPerSec)
+            if let rssi = v.wifi?.rssi { rssiHistory.append(Double(rssi)) }
         }
         if let v = b.disk { disk = v }
         if let v = b.diskIO {

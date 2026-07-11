@@ -218,6 +218,23 @@ enum ConnectionType: String {
     case none = "Offline"
 }
 
+/// Live Wi-Fi link details (feature #8). All CoreWLAN types are reduced to
+/// plain values here so Models stays Foundation-only. `ssidHidden` is true
+/// when we're associated to a network but macOS withholds the SSID (no
+/// Location permission), which is the common case on modern macOS.
+struct WiFiInfo {
+    var ssid: String? = nil
+    var ssidHidden: Bool = false
+    var bssid: String? = nil
+    var band: String? = nil            // "2.4 GHz" / "5 GHz" / "6 GHz"
+    var channel: Int? = nil
+    var channelWidth: String? = nil    // "80 MHz"
+    var rssi: Int? = nil               // dBm (signal)
+    var noise: Int? = nil              // dBm
+    var snr: Int? = nil                // dB (rssi − noise)
+    var txRateMbps: Double? = nil      // PHY transmit rate
+}
+
 struct NetworkSnapshot {
     var downBytesPerSec: Double = 0
     var upBytesPerSec: Double = 0
@@ -228,7 +245,18 @@ struct NetworkSnapshot {
     var ssid: String? = nil           // often nil on modern macOS without location permission
     var localIPv4: String? = nil
     var localIPv6: String? = nil
+    var wifi: WiFiInfo? = nil         // present only on a Wi-Fi link
     static let empty = NetworkSnapshot()
+}
+
+/// Per-process network throughput (feature #3), aggregated by app name across
+/// its helper PIDs. Rates are averaged over the ~5 s nettop sampling window.
+struct AppNetworkUsage: Identifiable {
+    var name: String
+    var downBytesPerSec: Double
+    var upBytesPerSec: Double
+    var id: String { name }
+    var combinedBytesPerSec: Double { downBytesPerSec + upBytesPerSec }
 }
 
 struct DataTotals {
@@ -237,12 +265,101 @@ struct DataTotals {
     var total: UInt64 { down &+ up }
 }
 
+/// One day's transferred totals, dated at that day's local midnight. Used to
+/// roll the persisted daily history into billing-cycle windows (feature #28).
+struct DailyDataPoint: Identifiable {
+    var day: Date
+    var down: UInt64
+    var up: UInt64
+    var total: UInt64 { down &+ up }
+    var id: Date { day }
+}
+
 struct NetworkDataSnapshot {
     var today = DataTotals()
     var yesterday = DataTotals()
     var last7Days = DataTotals()
     var last30Days = DataTotals()
+    /// Recent per-day totals (ascending), for arbitrary-window rollups like
+    /// the billing cycle. Bounded by the store's ~60-day retention.
+    var daily: [DailyDataPoint] = []
     static let empty = NetworkDataSnapshot()
+}
+
+/// Transferred totals for the current billing cycle (feature #28), computed on
+/// the fly from `NetworkDataSnapshot.daily` so nothing is double-counted.
+struct BillingCycleUsage {
+    var start: Date
+    var nextStart: Date
+    var down: UInt64
+    var up: UInt64
+    var daysLeft: Int
+    var total: UInt64 { down &+ up }
+
+    /// Sums the daily history that falls inside the cycle containing `now`.
+    /// `startDay` (1…31) is clamped to each month's length, so a "31st" start
+    /// lands on the last day of a short month.
+    static func compute(daily: [DailyDataPoint], startDay: Int,
+                        now: Date = Date(), calendar: Calendar = .current) -> BillingCycleUsage {
+        let day = min(max(startDay, 1), 31)
+        let today = calendar.startOfDay(for: now)
+        let start = cycleStart(onOrBefore: today, day: day, calendar: calendar)
+        let next = cycleStart(after: start, day: day, calendar: calendar)
+        var down: UInt64 = 0, up: UInt64 = 0
+        for point in daily where point.day >= start && point.day < next {
+            down &+= point.down
+            up &+= point.up
+        }
+        let daysLeft = max(0, calendar.dateComponents([.day], from: today, to: next).day ?? 0)
+        return BillingCycleUsage(start: start, nextStart: next, down: down, up: up, daysLeft: daysLeft)
+    }
+
+    /// The clamped cycle-start on or before `date`.
+    private static func cycleStart(onOrBefore date: Date, day: Int, calendar: Calendar) -> Date {
+        let c = calendar.dateComponents([.year, .month], from: date)
+        let thisMonth = clamped(year: c.year ?? 2000, month: c.month ?? 1, day: day, calendar: calendar)
+        if thisMonth <= date { return thisMonth }
+        let prev = calendar.date(byAdding: .month, value: -1, to: thisMonth) ?? thisMonth
+        let pc = calendar.dateComponents([.year, .month], from: prev)
+        return clamped(year: pc.year ?? 2000, month: pc.month ?? 1, day: day, calendar: calendar)
+    }
+
+    /// The clamped cycle-start one month after `start`.
+    private static func cycleStart(after start: Date, day: Int, calendar: Calendar) -> Date {
+        let next = calendar.date(byAdding: .month, value: 1, to: start) ?? start
+        let c = calendar.dateComponents([.year, .month], from: next)
+        return clamped(year: c.year ?? 2000, month: c.month ?? 1, day: day, calendar: calendar)
+    }
+
+    /// Local midnight of `day`, clamped into the given month's valid range.
+    private static func clamped(year: Int, month: Int, day: Int, calendar: Calendar) -> Date {
+        var c = DateComponents(); c.year = year; c.month = month; c.day = 1
+        let firstOfMonth = calendar.date(from: c) ?? Date()
+        let length = calendar.range(of: .day, in: .month, for: firstOfMonth)?.count ?? 28
+        c.day = min(day, length)
+        return calendar.startOfDay(for: calendar.date(from: c) ?? firstOfMonth)
+    }
+}
+
+// MARK: - Connectivity / outages
+
+/// One internet-outage interval (feature #9). `end` is nil while ongoing.
+struct OutageRecord: Codable, Identifiable {
+    var start: Date
+    var end: Date? = nil
+    var id: Date { start }
+    var durationSeconds: TimeInterval? { end.map { $0.timeIntervalSince(start) } }
+}
+
+/// Live connectivity state plus the recent outage log. `online` combines an
+/// interface being up (NWPathMonitor) with an active reachability probe.
+struct ConnectivitySnapshot {
+    var online: Bool = true
+    var interfaceUp: Bool = true       // a usable interface exists
+    var probeReachable: Bool = true    // the active TCP probe last succeeded
+    var currentOutage: OutageRecord? = nil
+    var recentOutages: [OutageRecord] = []   // newest first
+    static let empty = ConnectivitySnapshot()
 }
 
 // MARK: - Battery

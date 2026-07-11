@@ -39,6 +39,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let settings = SettingsStore.shared
         let engine = MetricsEngine.shared
         engine.start(interval: settings.sampleInterval)
+        engine.startMonitors()
         statusController = StatusItemController(
             engine: engine,
             settings: settings,
@@ -79,6 +80,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     func applicationWillTerminate(_ notification: Notification) {
         // Never leave fans forced after we're gone.
         FanControl.shared.restoreAllAutoOnQuit()
+        MetricsEngine.shared.stopMonitors()
         MetricsEngine.shared.stop()
     }
 

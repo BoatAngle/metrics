@@ -68,6 +68,16 @@ enum DumpRunner {
         let n = net.sample()
         print("\n[Network] \(n.connection.rawValue) via \(n.interfaceName ?? "?")  ↓ \(rate(n.downBytesPerSec))  ↑ \(rate(n.upBytesPerSec))")
         print("          ssid \(n.ssid ?? "–")  ipv4 \(n.localIPv4 ?? "–")  ipv6 \(n.localIPv6 ?? "–")")
+        if let w = n.wifi {
+            let ssid = w.ssid ?? (w.ssidHidden ? "hidden (location permission)" : "–")
+            let channel = [w.channel.map(String.init), w.band, w.channelWidth]
+                .compactMap { $0 }.joined(separator: " ")
+            print("          wifi: ssid \(ssid)  bssid \(w.bssid ?? "–")  channel \(channel.isEmpty ? "–" : channel)")
+            print("                rssi \(w.rssi.map { "\($0) dBm" } ?? "–")  noise \(w.noise.map { "\($0) dBm" } ?? "–")  snr \(w.snr.map { "\($0) dB" } ?? "–")  phy \(w.txRateMbps.map { String(format: "%.0f Mbps", $0) } ?? "–")")
+        }
+        let conn = ConnectivityMonitor.dumpStatus()
+        let online = conn.interfaceUp && conn.reachable
+        print("          connectivity: \(online ? "Online" : "Offline")  interface \(conn.interfaceUp ? "up" : "down")\(conn.interface.map { " (\($0))" } ?? "")  probe \(conn.reachable ? "reachable" : "unreachable")")
 
         let d = disk.sample()
         print("\n[Disk] \(d.volumes.count) volume(s)")

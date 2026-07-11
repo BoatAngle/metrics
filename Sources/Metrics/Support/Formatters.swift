@@ -55,6 +55,20 @@ enum Fmt {
         fahrenheit ? celsius * 9 / 5 + 32 : celsius
     }
 
+    /// Compact elapsed duration: "8s" / "3m 12s" / "1h 4m" / "2d 3h". Unlike
+    /// `uptime`, keeps seconds for the short durations an outage often has.
+    static func duration(_ seconds: TimeInterval) -> String {
+        let total = max(0, Int(seconds.rounded()))
+        let days = total / 86400
+        let hours = (total % 86400) / 3600
+        let mins = (total % 3600) / 60
+        let secs = total % 60
+        if days > 0 { return "\(days)d \(hours)h" }
+        if hours > 0 { return "\(hours)h \(mins)m" }
+        if mins > 0 { return "\(mins)m \(secs)s" }
+        return "\(secs)s"
+    }
+
     /// Relative age of a past sample: "3s ago" / "5m ago" / "2h ago" / "4d ago".
     static func ago(_ seconds: TimeInterval) -> String {
         let s = Int(seconds.rounded())

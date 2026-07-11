@@ -17,6 +17,8 @@ struct SettingsView: View {
                 .tabItem { Label("Fans", systemImage: "fanblades") }
             widgetsTab
                 .tabItem { Label("Widgets", systemImage: "square.on.square.dashed") }
+            networkTab
+                .tabItem { Label("Network", systemImage: "network") }
             DataSettingsTab()
                 .tabItem { Label("Data", systemImage: "cylinder.split.1x2") }
             aboutTab
@@ -231,6 +233,73 @@ struct SettingsView: View {
                 }
             }
         )
+    }
+
+    // MARK: - Network
+
+    private var networkTab: some View {
+        Form {
+            Section {
+                Stepper(value: billingDayBinding, in: 1...31) {
+                    LabeledContent("Billing cycle starts", value: ordinalDay(settings.billingCycleStartDay))
+                }
+            } header: {
+                Text("Billing cycle")
+            } footer: {
+                Text("The Network Data card's “This cycle” total resets on this day each month. A day past the month's length lands on its last day.")
+            }
+            Section {
+                Toggle("Set a monthly data cap", isOn: capEnabledBinding)
+                if settings.monthlyDataCapGB != nil {
+                    LabeledContent("Cap") {
+                        HStack(spacing: 6) {
+                            TextField("", value: capValueBinding, format: .number)
+                                .labelsHidden()
+                                .frame(width: 90)
+                                .multilineTextAlignment(.trailing)
+                            Text("GB")
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                }
+            } footer: {
+                Text("With a cap set, the card shows how much of it this cycle has used and how many days remain.")
+            }
+        }
+        .formStyle(.grouped)
+    }
+
+    private var billingDayBinding: Binding<Int> {
+        Binding(
+            get: { settings.billingCycleStartDay },
+            set: { settings.billingCycleStartDay = min(max($0, 1), 31) }
+        )
+    }
+
+    private var capEnabledBinding: Binding<Bool> {
+        Binding(
+            get: { settings.monthlyDataCapGB != nil },
+            set: { settings.monthlyDataCapGB = $0 ? (settings.monthlyDataCapGB ?? 1000) : nil }
+        )
+    }
+
+    private var capValueBinding: Binding<Double> {
+        Binding(
+            get: { settings.monthlyDataCapGB ?? 1000 },
+            set: { settings.monthlyDataCapGB = max(0, $0) }
+        )
+    }
+
+    private func ordinalDay(_ day: Int) -> String {
+        let suffix: String
+        switch (day % 10, day % 100) {
+        case (1, 11), (2, 12), (3, 13): suffix = "th"
+        case (1, _): suffix = "st"
+        case (2, _): suffix = "nd"
+        case (3, _): suffix = "rd"
+        default: suffix = "th"
+        }
+        return "\(day)\(suffix)"
     }
 
     // MARK: - About

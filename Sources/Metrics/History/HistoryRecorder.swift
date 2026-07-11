@@ -11,6 +11,7 @@ enum HistoryMetric {
     static let hotspot = "temp.hotspot"             // °C
     static let netDown = "net.down"                 // B/s
     static let netUp = "net.up"                     // B/s
+    static let wifiRSSI = "wifi.rssi"               // dBm (signal)
     static let diskRead = "disk.read"               // B/s
     static let diskWrite = "disk.write"             // B/s
     static let batteryPercent = "battery.percent"   // %
@@ -47,6 +48,9 @@ final class HistoryRecorder {
         if let v = bundle.network {
             samples.append((HistoryMetric.netDown, v.downBytesPerSec))
             samples.append((HistoryMetric.netUp, v.upBytesPerSec))
+            if let rssi = v.wifi?.rssi {
+                samples.append((HistoryMetric.wifiRSSI, Double(rssi)))
+            }
         }
         if let v = bundle.diskIO {
             samples.append((HistoryMetric.diskRead, v.readBytesPerSec))

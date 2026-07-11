@@ -60,6 +60,13 @@ final class NetworkDataStore {
         }
         snap.last7Days = sumLocked(daysBack: 7, endingAt: now, todayKey: todayKey, calendar: calendar)
         snap.last30Days = sumLocked(daysBack: 30, endingAt: now, todayKey: todayKey, calendar: calendar)
+        // Full per-day series (ascending) for arbitrary windows like the
+        // billing cycle. Keys are "yyyy-MM-dd" in local time; parse them back
+        // to that day's local midnight.
+        snap.daily = totals.compactMap { key, value in
+            guard let date = dayFormatter.date(from: key) else { return nil }
+            return DailyDataPoint(day: date, down: value.down, up: value.up)
+        }.sorted { $0.day < $1.day }
         return snap
     }
 
