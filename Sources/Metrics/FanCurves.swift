@@ -26,6 +26,26 @@ enum FanMode: String, Codable, CaseIterable, Identifiable {
         }
     }
 
+    /// A tiny SF Symbol glyph for the active mode, shown on the Fan RPM menu bar
+    /// item (#38).
+    var glyph: String {
+        switch self {
+        case .auto: return "a.circle"
+        case .quiet: return "moon.fill"
+        case .balanced: return "circle.lefthalf.filled"
+        case .performance: return "bolt.fill"
+        case .manual: return "hand.point.up.left.fill"
+        }
+    }
+
+    /// Advances to the next mode, wrapping — used by the "cycle fan mode" click
+    /// action (#37).
+    var next: FanMode {
+        let all = FanMode.allCases
+        let idx = all.firstIndex(of: self) ?? 0
+        return all[(idx + 1) % all.count]
+    }
+
     /// Curve control points: (°C, fraction of the fan's min→max speed range).
     /// nil for modes that don't drive a curve.
     var curvePoints: [(temp: Double, fraction: Double)]? {

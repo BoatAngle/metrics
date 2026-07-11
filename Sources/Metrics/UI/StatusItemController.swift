@@ -7,8 +7,10 @@ private final class PassthroughHostingView: NSHostingView<AnyView> {
     override func hitTest(_ point: NSPoint) -> NSView? { nil }
 }
 
-/// Creates one NSStatusItem per enabled menu bar widget (fixed widths, so the
-/// menu bar never shifts as values update) and owns the dashboard popover.
+/// Creates one NSStatusItem per configured menu bar item (fixed widths, so the
+/// menu bar never shifts as values update), dispatches per-item click actions
+/// (#37), refreshes live tooltips each tick (#40), and owns the dashboard
+/// popover.
 @MainActor
 final class StatusItemController: NSObject, NSPopoverDelegate {
     private let engine: MetricsEngine
@@ -16,7 +18,15 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
     private let openDashboardAction: () -> Void
     private let openSettingsAction: () -> Void
 
-    private var items: [MenuBarWidgetKind: NSStatusItem] = [:]
+    /// One live status item, keeping its hosting view so a config change can be
+    /// applied in place (no flicker, no lost menu bar position) instead of
+    /// recreating the NSStatusItem.
+    private struct Item {
+        var instance: WidgetInstance
+        let statusItem: NSStatusItem
+        let hosting: NSHostingView<AnyView>
+    }
+    private var items: [String: Item] = [:]
     private var popover: NSPopover?
     private weak var popoverAnchor: NSStatusBarButton?
     private var clickMonitor: Any?
@@ -32,37 +42,41 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
         super.init()
         rebuildItems()
         observeSettings()
+        observeEngineForTooltips()
     }
 
     // MARK: Items
 
     private func rebuildItems() {
-        var wanted = settings.enabledWidgets
-        if wanted.isEmpty { wanted = [.cpuPercent] } // never leave the app unreachable
+        var wanted = settings.widgetInstances
+        if wanted.isEmpty { wanted = WidgetInstance.defaults } // never leave the app unreachable
 
-        for (kind, item) in items where !wanted.contains(kind) {
-            NSStatusBar.system.removeStatusItem(item)
-            items[kind] = nil
+        let wantedIDs = Set(wanted.map(\.id))
+        // Drop items that vanished.
+        for (id, entry) in items where !wantedIDs.contains(id) {
+            NSStatusBar.system.removeStatusItem(entry.statusItem)
+            items[id] = nil
         }
-        // New items appear leftmost, so create in reverse for stable order.
-        for kind in wanted.reversed() where items[kind] == nil {
-            items[kind] = makeItem(kind: kind)
+        // Update changed items in place; create new ones (in reverse so a fresh
+        // item lands leftmost, matching the array order).
+        for inst in wanted.reversed() {
+            if let existing = items[inst.id] {
+                if existing.instance != inst { apply(inst, to: existing) }
+            } else {
+                items[inst.id] = makeItem(for: inst)
+            }
         }
+        updateTooltips()
     }
 
-    private func makeItem(kind: MenuBarWidgetKind) -> NSStatusItem {
-        let item = NSStatusBar.system.statusItem(withLength: kind.fixedWidth)
-        item.autosaveName = "metrics.widget.\(kind.rawValue)"
+    private func makeItem(for instance: WidgetInstance) -> Item {
+        let statusItem = NSStatusBar.system.statusItem(withLength: MenuBarLayout.width(for: instance))
+        statusItem.autosaveName = "metrics.widget.\(instance.id)"
 
-        let root = AnyView(
-            MenuBarItemView(kind: kind)
-                .environment(engine)
-                .environment(settings)
-        )
-        let hosting = PassthroughHostingView(rootView: root)
+        let hosting = PassthroughHostingView(rootView: rootView(for: instance))
         hosting.translatesAutoresizingMaskIntoConstraints = false
 
-        if let button = item.button {
+        if let button = statusItem.button {
             button.addSubview(hosting)
             NSLayoutConstraint.activate([
                 hosting.centerYAnchor.constraint(equalTo: button.centerYAnchor),
@@ -72,16 +86,66 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
             button.action = #selector(handleClick(_:))
             button.sendAction(on: [.leftMouseUp, .rightMouseUp])
         }
-        return item
+        return Item(instance: instance, statusItem: statusItem, hosting: hosting)
+    }
+
+    /// Applies a changed configuration to a live item: new width and refreshed
+    /// SwiftUI content, keeping the same NSStatusItem (and its menu bar slot).
+    private func apply(_ instance: WidgetInstance, to entry: Item) {
+        entry.statusItem.length = MenuBarLayout.width(for: instance)
+        entry.hosting.rootView = rootView(for: instance)
+        items[instance.id]?.instance = instance
+    }
+
+    private func rootView(for instance: WidgetInstance) -> AnyView {
+        AnyView(
+            MenuBarItemView(instance: instance)
+                .environment(engine)
+                .environment(settings)
+        )
+    }
+
+    /// The instance a status bar button belongs to, matched by identity.
+    private func instance(for button: NSStatusBarButton) -> WidgetInstance? {
+        items.values.first(where: { $0.statusItem.button === button })?.instance
     }
 
     // MARK: Settings observation
 
     private func observeSettings() {
         observeChanges { [weak self] in
-            _ = self?.settings.enabledWidgets
+            _ = self?.settings.widgetInstances
         } perform: { [weak self] in
             self?.rebuildItems()
+        }
+    }
+
+    // MARK: Live tooltips (#40)
+
+    /// Rebuilds every item's tooltip each time the engine publishes new samples.
+    private func observeEngineForTooltips() {
+        observeChanges { [weak self] in
+            guard let self else { return }
+            // Touch the snapshots the tooltips read so this re-fires each tick.
+            _ = self.engine.cpu
+            _ = self.engine.gpu
+            _ = self.engine.memory
+            _ = self.engine.disk
+            _ = self.engine.diskIO
+            _ = self.engine.battery
+            _ = self.engine.sensors
+            _ = self.engine.network
+            _ = self.engine.networkData
+            _ = self.engine.processes
+        } perform: { [weak self] in
+            self?.updateTooltips()
+        }
+    }
+
+    private func updateTooltips() {
+        for (_, entry) in items {
+            entry.statusItem.button?.toolTip = MenuBarTooltip.text(for: entry.instance,
+                                                                   engine: engine, settings: settings)
         }
     }
 
@@ -91,8 +155,41 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
         if NSApp.currentEvent?.type == .rightMouseUp {
             showContextMenu(from: sender)
         } else {
-            togglePopover(from: sender)
+            performLeftClick(instance(for: sender), from: sender)
         }
+    }
+
+    /// Dispatches the item's configured left-click action (#37). A missing
+    /// instance (shouldn't happen) falls back to the historical popover toggle.
+    private func performLeftClick(_ instance: WidgetInstance?, from button: NSStatusBarButton) {
+        switch instance?.clickAction ?? .openDashboard {
+        case .openDashboard:
+            togglePopover(from: button)
+        case .openCard:
+            openCard(for: instance, from: button)
+        case .activityMonitor:
+            openActivityMonitor()
+        case .cycleFanMode:
+            FanControl.shared.mode = FanControl.shared.mode.next
+        }
+    }
+
+    /// Opens the dashboard window and scrolls/pulses to the item's card. Items
+    /// without a natural card (Combined, Custom Format) just open the popover.
+    private func openCard(for instance: WidgetInstance?, from button: NSStatusBarButton) {
+        guard let kind = instance?.kind.card else {
+            togglePopover(from: button)
+            return
+        }
+        if settings.hiddenCards.contains(kind) { settings.hiddenCards.remove(kind) }
+        openDashboardAction()
+        // Defer so the freshly shown window observes the nonce change.
+        DispatchQueue.main.async { DashboardNavigator.shared.requestScroll(to: kind) }
+    }
+
+    private func openActivityMonitor() {
+        let url = URL(fileURLWithPath: "/System/Applications/Utilities/Activity Monitor.app")
+        NSWorkspace.shared.openApplication(at: url, configuration: NSWorkspace.OpenConfiguration())
     }
 
     private func showContextMenu(from button: NSStatusBarButton) {

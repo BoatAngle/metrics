@@ -165,6 +165,8 @@ struct DashboardWindowView: View {
     // which the Command Line Tools toolchain doesn't ship. SwiftUI picks up
     // stored DynamicProperty values by reflection, so this behaves the same.
     private var draggingCard = State(initialValue: CardKind?.none)
+    /// The card currently pulsing from a deep-link/menu-bar focus (#37).
+    private var highlightedCard = State(initialValue: CardKind?.none)
 
     var body: some View {
         VStack(spacing: 0) {
@@ -180,11 +182,21 @@ struct DashboardWindowView: View {
                     }
                     .padding(20)
                 }
-                // Driven by metrics://card/<kind>: scroll the requested card to
-                // the top whenever the navigator bumps its nonce.
+                // Driven by metrics://card/<kind> and the "open dashboard at
+                // card" menu bar click: scroll the requested card to the top
+                // whenever the navigator bumps its nonce.
                 .onChange(of: navigator.scrollNonce) {
                     guard let target = navigator.scrollTarget else { return }
                     withAnimation { proxy.scrollTo(target, anchor: .top) }
+                }
+                // Brief highlight pulse on the focused card (#37).
+                .onChange(of: navigator.highlightNonce) {
+                    guard let target = navigator.highlightTarget else { return }
+                    highlightedCard.wrappedValue = target
+                    Task { @MainActor in
+                        try? await Task.sleep(nanoseconds: 1_200_000_000)
+                        if highlightedCard.wrappedValue == target { highlightedCard.wrappedValue = nil }
+                    }
                 }
             }
         }
@@ -232,6 +244,7 @@ struct DashboardWindowView: View {
                     ForEach(balancedColumns[column]) { kind in
                         MetricCardView(kind: kind)
                             .cardReorderable(kind, dragging: draggingCard.projectedValue)
+                            .overlay(cardHighlight(kind))
                             .id(kind) // scroll target for metrics://card/<kind>
                     }
                 }
@@ -241,6 +254,15 @@ struct DashboardWindowView: View {
         .animation(.default, value: settings.visibleCards)
         .onDrop(of: [.text],
                 delegate: CardDropResetDelegate(dragging: draggingCard.projectedValue))
+    }
+
+    /// The deep-link highlight ring drawn over a focused card (#37).
+    @ViewBuilder private func cardHighlight(_ kind: CardKind) -> some View {
+        RoundedRectangle(cornerRadius: 11, style: .continuous)
+            .strokeBorder(Color.accentColor, lineWidth: 2)
+            .opacity(highlightedCard.wrappedValue == kind ? 1 : 0)
+            .animation(.easeInOut(duration: 0.4), value: highlightedCard.wrappedValue)
+            .allowsHitTesting(false)
     }
 
     /// Greedy shortest-column packing by estimated card height, so the two

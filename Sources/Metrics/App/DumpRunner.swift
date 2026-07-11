@@ -186,8 +186,67 @@ enum DumpRunner {
 
         dumpAnalytics(device: dev, network: n, memory: m, power: pw, sensors: s, store: store)
         dumpAlerts(sensors: s)
+        dumpMenuBar(cpu: c, gpu: g, memory: m, network: n, sensors: s, battery: b)
 
         print("\nDone.")
+    }
+
+    /// Menu bar overhaul (Package 11, features #33–#40). Exercises the non-UI
+    /// logic the GUI can't be launched to test: legacy→instance migration,
+    /// custom-format token rendering, and reactive-color classification.
+    private static func dumpMenuBar(cpu c: CPUSnapshot, gpu g: GPUSnapshot, memory m: MemorySnapshot,
+                                    network n: NetworkSnapshot, sensors s: SensorsSnapshot,
+                                    battery b: BatterySnapshot) {
+        let legacy: [MenuBarWidgetKind] = [.cpuPercent, .cpuGraph, .network, .temperature, .battery]
+        let migrated = WidgetInstance.migrate(from: legacy)
+        print("\n[Menu Bar] migrated \(legacy.count) legacy item(s) → instances:")
+        for inst in migrated {
+            let thr = inst.kind.defaultThresholds.map { "warn \(Int($0.warn)) crit \(Int($0.crit))" } ?? "none"
+            print("           \(inst.kind.title) [\(inst.style.title)]  width \(Int(MenuBarLayout.width(for: inst)))  thresholds \(thr)")
+        }
+
+        let values = MenuFormatValues(
+            cpuPercent: c.totalUsage * 100,
+            gpuPercent: g.available ? g.usageFraction * 100 : nil,
+            memPercent: m.usedFraction * 100,
+            hotspotC: s.hotspotC ?? s.cpuTempC,
+            netDownBytesPerSec: n.downBytesPerSec,
+            netUpBytesPerSec: n.upBytesPerSec,
+            fanRPM: s.fans.map(\.rpm).max(),
+            batteryPercent: b.hasBattery ? b.percent : nil,
+            useFahrenheit: false)
+        let template = "{cpu} {gpu} {mem} {hot}° ↓{net.down} ↑{net.up} {fan.rpm}rpm {batt}"
+        print("           format \"\(template)\" → \(MenuFormat.render(template, values))")
+
+        func band(_ v: Double, _ w: Double, _ cr: Double) -> String {
+            switch LoadLevel.evaluate(value: v, warn: w, crit: cr) {
+            case .normal: return "normal"
+            case .warn: return "warn"
+            case .crit: return "crit"
+            }
+        }
+        print("           reactive: cpu \(band(c.totalUsage * 100, 80, 90))  memory-pressure \(m.pressureLevel.label)"
+            + (s.hotspotC.map { "  hotspot \(band($0, 85, 95))" } ?? ""))
+
+        // Persistence round-trip over every optional payload (feature #38) — the
+        // migration/decode paths can't be exercised from the GUI here.
+        var sensor = WidgetInstance(kind: .sensor, style: .gauge, clickAction: .openCard,
+                                    sensorName: "Hotspot", sensorLabel: "HOT")
+        sensor.reactiveColor = true; sensor.warnThreshold = 70; sensor.critThreshold = 85
+        let rich = migrated + [
+            sensor,
+            WidgetInstance(kind: .combined, combinedMetrics: [.cpu, .memory, .disk]),
+            WidgetInstance(kind: .format, formatString: "{cpu} {hot}°"),
+            WidgetInstance(kind: .fanRPM, fanIndex: 0),
+            WidgetInstance(kind: .topProcess),
+        ]
+        if let data = try? JSONEncoder().encode(rich),
+           let back = try? JSONDecoder().decode([WidgetInstance].self, from: data) {
+            print("           codec round-trip: \(back == rich ? "ok" : "MISMATCH") "
+                + "(\(back.count) items, \(data.count) bytes)")
+        } else {
+            print("           codec round-trip: ENCODE/DECODE FAILED")
+        }
     }
 
     /// Session stats (#25), records (#26), weekly summary (#30/#31) and export

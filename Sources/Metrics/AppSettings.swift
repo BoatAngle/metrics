@@ -105,6 +105,14 @@ private struct PersistedSettings: Codable {
     var quietHoursStartMinutes: Int? = nil   // minutes since local midnight
     var quietHoursEndMinutes: Int? = nil
     var suppressDuringDND: Bool? = nil
+    /// Menu bar overhaul (Package 11, features #33–#40). `widgetInstances`
+    /// supersedes `enabledWidgets` when present; old settings that only have
+    /// `enabledWidgets` are migrated forward losslessly on first load. Both are
+    /// kept optional so every prior settings version still decodes, and
+    /// `enabledWidgets` keeps being written as a legacy projection so a
+    /// downgrade still finds something to show.
+    var widgetInstances: [WidgetInstance]? = nil
+    var menuBarReactiveColors: Bool? = nil
 }
 
 // MARK: - Store
@@ -116,7 +124,12 @@ final class SettingsStore {
     /// Bounds for the sampling interval; the settings slider spans the same range.
     static let sampleIntervalRange: ClosedRange<Double> = 0.5...5
 
-    var enabledWidgets: [MenuBarWidgetKind] { didSet { save() } }
+    /// Configured menu bar items (Package 11). Authoritative source of truth for
+    /// what the status bar shows; supersedes the legacy `enabledWidgets` list.
+    var widgetInstances: [WidgetInstance] { didSet { save() } }
+    /// Global reactive-color toggle (#33). Per-item overrides live on the
+    /// instance's `reactiveColor`.
+    var menuBarReactiveColors: Bool { didSet { save() } }
     var cardOrder: [CardKind] { didSet { save() } }
     var hiddenCards: Set<CardKind> { didSet { save() } }
     var sampleInterval: Double { didSet { save() } }
@@ -154,6 +167,43 @@ final class SettingsStore {
         cardChartWindows[kind] = window
     }
 
+    // MARK: Menu bar items (Package 11)
+
+    /// Appends a new item of the given kind, seeded with sensible defaults.
+    func addWidget(_ kind: WidgetItemKind) {
+        var inst = WidgetInstance(kind: kind, style: kind.defaultStyle)
+        switch kind {
+        case .combined: inst.combinedMetrics = [.cpu, .memory]
+        case .format: inst.formatString = MenuFormat.defaultTemplate
+        default: break
+        }
+        widgetInstances.append(inst)
+    }
+
+    /// Removes an item, never leaving the list empty (which would strand the app).
+    func removeWidget(id: String) {
+        widgetInstances.removeAll { $0.id == id }
+        if widgetInstances.isEmpty { widgetInstances = WidgetInstance.defaults }
+    }
+
+    /// Shifts an item earlier/later in the list (and thus left/right in the bar).
+    func moveWidget(id: String, by offset: Int) {
+        guard let idx = widgetInstances.firstIndex(where: { $0.id == id }) else { return }
+        let target = idx + offset
+        guard widgetInstances.indices.contains(target) else { return }
+        var arr = widgetInstances
+        arr.swapAt(idx, target)
+        widgetInstances = arr
+    }
+
+    /// Replaces an item in place (reassigning the whole array so observers fire).
+    func updateWidget(_ instance: WidgetInstance) {
+        guard let idx = widgetInstances.firstIndex(where: { $0.id == instance.id }) else { return }
+        var arr = widgetInstances
+        arr[idx] = instance
+        widgetInstances = arr
+    }
+
     private var loaded = false
 
     private init() {
@@ -166,7 +216,18 @@ final class SettingsStore {
         var order = p.cardOrder
         for kind in CardKind.allCases where !order.contains(kind) { order.append(kind) }
 
-        enabledWidgets = p.enabledWidgets
+        // Menu bar items (Package 11): prefer the new instance list; otherwise
+        // migrate the legacy `enabledWidgets` forward. Fall back to defaults if
+        // both come up empty so the app is never left unreachable.
+        var instances: [WidgetInstance]
+        if let saved = p.widgetInstances, !saved.isEmpty {
+            instances = saved
+        } else {
+            instances = WidgetInstance.migrate(from: p.enabledWidgets)
+        }
+        if instances.isEmpty { instances = WidgetInstance.defaults }
+        widgetInstances = instances
+        menuBarReactiveColors = p.menuBarReactiveColors ?? true
         cardOrder = order
         hiddenCards = Set(p.hiddenCards)
         sampleInterval = min(max(p.sampleInterval, Self.sampleIntervalRange.lowerBound),
@@ -193,7 +254,12 @@ final class SettingsStore {
 
     private func save() {
         guard loaded else { return }
-        let p = PersistedSettings(enabledWidgets: enabledWidgets,
+        // Keep the legacy list in sync as a best-effort projection, so an older
+        // build reading only `enabledWidgets` after a downgrade still shows
+        // something reasonable. Empty (all-new kinds) falls back to CPU%.
+        var legacy = widgetInstances.compactMap { $0.legacyKind }
+        if legacy.isEmpty { legacy = [.cpuPercent] }
+        let p = PersistedSettings(enabledWidgets: legacy,
                                   cardOrder: cardOrder,
                                   hiddenCards: Array(hiddenCards),
                                   sampleInterval: sampleInterval,
@@ -210,7 +276,9 @@ final class SettingsStore {
                                   quietHoursEnabled: quietHoursEnabled,
                                   quietHoursStartMinutes: quietHoursStartMinutes,
                                   quietHoursEndMinutes: quietHoursEndMinutes,
-                                  suppressDuringDND: suppressDuringDND)
+                                  suppressDuringDND: suppressDuringDND,
+                                  widgetInstances: widgetInstances,
+                                  menuBarReactiveColors: menuBarReactiveColors)
         if let data = try? JSONEncoder().encode(p) {
             UserDefaults.standard.set(data, forKey: Self.key)
         }

@@ -11,7 +11,9 @@ struct SettingsView: View {
         TabView {
             generalTab
                 .tabItem { Label("General", systemImage: "gearshape") }
-            menuBarTab
+            MenuBarSettingsTab()
+                .environment(engine)
+                .environment(settings)
                 .tabItem { Label("Menu Bar", systemImage: "menubar.rectangle") }
             dashboardTab
                 .tabItem { Label("Dashboard", systemImage: "rectangle.grid.1x2") }
@@ -107,39 +109,6 @@ struct SettingsView: View {
         Binding(
             get: { settings.useFahrenheit },
             set: { settings.useFahrenheit = $0 }
-        )
-    }
-
-    // MARK: - Menu Bar
-
-    private var menuBarTab: some View {
-        Form {
-            Section {
-                ForEach(MenuBarWidgetKind.allCases) { kind in
-                    Toggle(kind.title, isOn: widgetBinding(for: kind))
-                        .disabled(settings.enabledWidgets.count == 1
-                                  && settings.enabledWidgets.contains(kind))
-                }
-            } footer: {
-                Text("⌘-drag items in the menu bar to rearrange them.")
-            }
-        }
-        .formStyle(.grouped)
-    }
-
-    private func widgetBinding(for kind: MenuBarWidgetKind) -> Binding<Bool> {
-        Binding(
-            get: { settings.enabledWidgets.contains(kind) },
-            set: { enabled in
-                var membership = Set(settings.enabledWidgets)
-                if enabled {
-                    membership.insert(kind)
-                } else {
-                    guard membership.count > 1 else { return }
-                    membership.remove(kind)
-                }
-                settings.enabledWidgets = MenuBarWidgetKind.allCases.filter { membership.contains($0) }
-            }
         )
     }
 
@@ -663,5 +632,288 @@ private struct FansSettingsTab: View {
     private func curveTargetText(for fan: FanInfo) -> String {
         guard let rpm = fans.currentTargets[fan.id] else { return "—" }
         return "\(Int(rpm.rounded()).formatted()) rpm"
+    }
+}
+
+// MARK: - Menu Bar (Package 11)
+
+/// Tri-state per-item reactive-color choice (#33): follow the global toggle, or
+/// force it on/off for this item.
+private enum ReactiveChoice: String, CaseIterable, Identifiable {
+    case global, on, off
+    var id: String { rawValue }
+    var title: String {
+        switch self {
+        case .global: return "Follow global"
+        case .on: return "On"
+        case .off: return "Off"
+        }
+    }
+}
+
+/// Full menu bar item editor: the global reactive toggle plus one configurable
+/// section per item (kind-specific fields, render style, thresholds, click
+/// action) with add / remove / reorder.
+private struct MenuBarSettingsTab: View {
+    @Environment(MetricsEngine.self) private var engine
+    @Environment(SettingsStore.self) private var settings
+
+    var body: some View {
+        Form {
+            Section {
+                Toggle("Load-reactive colors", isOn: reactiveGlobalBinding)
+            } footer: {
+                Text("Tints items amber, then red, as CPU, memory pressure, temperature or disk cross their thresholds. Each item can override this below.")
+            }
+
+            Section {
+                addMenu
+            } footer: {
+                Text("⌘-drag items in the menu bar to rearrange them, or use the arrows on each item.")
+            }
+
+            ForEach(Array(settings.widgetInstances.enumerated()), id: \.element.id) { index, inst in
+                itemSection(inst, index: index)
+            }
+        }
+        .formStyle(.grouped)
+    }
+
+    private var reactiveGlobalBinding: Binding<Bool> {
+        Binding(get: { settings.menuBarReactiveColors },
+                set: { settings.menuBarReactiveColors = $0 })
+    }
+
+    private var addMenu: some View {
+        Menu {
+            ForEach(WidgetItemKind.allCases) { kind in
+                Button { settings.addWidget(kind) } label: { Label(kind.title, systemImage: kind.symbol) }
+            }
+        } label: {
+            Label("Add Item", systemImage: "plus.circle")
+        }
+    }
+
+    // MARK: One item
+
+    @ViewBuilder private func itemSection(_ inst: WidgetInstance, index: Int) -> some View {
+        Section {
+            // Kind-specific configuration first.
+            kindConfig(inst)
+
+            if !inst.kind.availableStyles.isEmpty {
+                Picker("Style", selection: styleBinding(inst)) {
+                    ForEach(inst.kind.availableStyles) { Text($0.title).tag($0) }
+                }
+            }
+
+            if showsColoring(inst.kind) {
+                Picker("Reactive color", selection: reactiveChoiceBinding(inst)) {
+                    ForEach(ReactiveChoice.allCases) { Text($0.title).tag($0) }
+                }
+                if inst.kind == .memory {
+                    Text("Colored by memory pressure (amber at Warning, red at Critical).")
+                        .font(.caption).foregroundStyle(.secondary)
+                } else if inst.kind == .combined {
+                    Text("Each metric is colored by its own thresholds.")
+                        .font(.caption).foregroundStyle(.secondary)
+                } else {
+                    thresholdRows(inst)
+                }
+            }
+
+            Picker("On left-click", selection: clickBinding(inst)) {
+                ForEach(WidgetClickAction.allCases) { Text($0.title).tag($0) }
+            }
+        } header: {
+            HStack(spacing: 8) {
+                Image(systemName: inst.kind.symbol)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(inst.kind.title).font(.system(size: 12, weight: .semibold))
+                    Text(inst.summary).font(.caption2).foregroundStyle(.secondary)
+                        .lineLimit(1).truncationMode(.tail)
+                }
+                Spacer()
+                Button { settings.moveWidget(id: inst.id, by: -1) } label: { Image(systemName: "chevron.up") }
+                    .buttonStyle(.borderless).disabled(index == 0)
+                Button { settings.moveWidget(id: inst.id, by: 1) } label: { Image(systemName: "chevron.down") }
+                    .buttonStyle(.borderless).disabled(index == settings.widgetInstances.count - 1)
+                Button(role: .destructive) { settings.removeWidget(id: inst.id) } label: {
+                    Image(systemName: "trash")
+                }
+                .buttonStyle(.borderless)
+            }
+            .textCase(nil)
+        }
+    }
+
+    /// Kinds that participate in reactive coloring (#33) and so show the toggle.
+    private func showsColoring(_ kind: WidgetItemKind) -> Bool {
+        kind.defaultThresholds != nil || kind == .memory || kind == .combined
+    }
+
+    // MARK: Kind-specific config
+
+    @ViewBuilder private func kindConfig(_ inst: WidgetInstance) -> some View {
+        switch inst.kind {
+        case .combined:
+            LabeledContent("Metrics (2–3)") {
+                VStack(alignment: .leading, spacing: 2) {
+                    ForEach(WidgetItemKind.combinableScalars) { metric in
+                        Toggle(metric.title, isOn: combinedBinding(inst, metric))
+                            .toggleStyle(.checkbox)
+                            .disabled(combinedDisabled(inst, metric))
+                    }
+                }
+            }
+        case .format:
+            TextField("Template", text: formatBinding(inst))
+            DisclosureGroup("Tokens") {
+                ForEach(MenuFormat.tokens, id: \.token) { entry in
+                    LabeledContent {
+                        Text(entry.description).font(.caption).foregroundStyle(.secondary)
+                    } label: {
+                        Text(entry.token).font(.system(size: 11, design: .monospaced))
+                    }
+                }
+            }
+        case .sensor:
+            Picker("Sensor", selection: sensorNameBinding(inst)) {
+                ForEach(sensorChoices(inst), id: \.self) { Text($0).tag($0) }
+            }
+            TextField("Label (3 chars)", text: sensorLabelBinding(inst))
+                .onAppear { seedSensorIfNeeded(inst) }
+        case .fanRPM:
+            Picker("Fan", selection: fanBinding(inst)) {
+                Text("Max").tag(Int?.none)
+                ForEach(engine.sensors.fans) { fan in
+                    Text(fan.name).tag(Int?.some(fan.id))
+                }
+            }
+        default:
+            EmptyView()
+        }
+    }
+
+    @ViewBuilder private func thresholdRows(_ inst: WidgetInstance) -> some View {
+        let isTemp = (inst.kind == .temperature || inst.kind == .sensor)
+        let unit = isTemp ? "°C" : "%"
+        let range: ClosedRange<Double> = isTemp ? 0...120 : 0...100
+        Stepper(value: warnBinding(inst), in: range, step: isTemp ? 1 : 5) {
+            LabeledContent("Warn", value: "\(Int(currentThresholds(inst).warn)) \(unit)")
+        }
+        Stepper(value: critBinding(inst), in: range, step: isTemp ? 1 : 5) {
+            LabeledContent("Critical", value: "\(Int(currentThresholds(inst).crit)) \(unit)")
+        }
+    }
+
+    // MARK: Lookups & bindings
+
+    /// The live copy of an instance from the store (the ForEach element can lag
+    /// a mutation by a frame).
+    private func current(_ inst: WidgetInstance) -> WidgetInstance {
+        settings.widgetInstances.first(where: { $0.id == inst.id }) ?? inst
+    }
+
+    private func currentThresholds(_ inst: WidgetInstance) -> (warn: Double, crit: Double) {
+        current(inst).thresholds ?? inst.kind.defaultThresholds ?? (0, 0)
+    }
+
+    private func styleBinding(_ inst: WidgetInstance) -> Binding<WidgetRenderStyle> {
+        Binding(get: { current(inst).style },
+                set: { var c = current(inst); c.style = $0; settings.updateWidget(c) })
+    }
+
+    private func clickBinding(_ inst: WidgetInstance) -> Binding<WidgetClickAction> {
+        Binding(get: { current(inst).clickAction },
+                set: { var c = current(inst); c.clickAction = $0; settings.updateWidget(c) })
+    }
+
+    private func reactiveChoiceBinding(_ inst: WidgetInstance) -> Binding<ReactiveChoice> {
+        Binding(get: {
+            switch current(inst).reactiveColor {
+            case .none: return .global
+            case .some(true): return .on
+            case .some(false): return .off
+            }
+        }, set: {
+            var c = current(inst)
+            switch $0 {
+            case .global: c.reactiveColor = nil
+            case .on: c.reactiveColor = true
+            case .off: c.reactiveColor = false
+            }
+            settings.updateWidget(c)
+        })
+    }
+
+    private func warnBinding(_ inst: WidgetInstance) -> Binding<Double> {
+        Binding(get: { currentThresholds(inst).warn },
+                set: { var c = current(inst); c.warnThreshold = $0; settings.updateWidget(c) })
+    }
+
+    private func critBinding(_ inst: WidgetInstance) -> Binding<Double> {
+        Binding(get: { currentThresholds(inst).crit },
+                set: { var c = current(inst); c.critThreshold = $0; settings.updateWidget(c) })
+    }
+
+    private func combinedBinding(_ inst: WidgetInstance, _ metric: WidgetItemKind) -> Binding<Bool> {
+        Binding(get: { (current(inst).combinedMetrics ?? []).contains(metric) },
+                set: { on in
+                    var c = current(inst)
+                    var list = c.combinedMetrics ?? []
+                    if on {
+                        if list.count < 3, !list.contains(metric) { list.append(metric) }
+                    } else {
+                        if list.count > 2 { list.removeAll { $0 == metric } }
+                    }
+                    c.combinedMetrics = list
+                    settings.updateWidget(c)
+                })
+    }
+
+    /// A metric checkbox is disabled when unchecking would drop below 2, or
+    /// checking would exceed 3 — keeping a Combined item in its 2–3 range.
+    private func combinedDisabled(_ inst: WidgetInstance, _ metric: WidgetItemKind) -> Bool {
+        let list = current(inst).combinedMetrics ?? []
+        if list.contains(metric) { return list.count <= 2 }
+        return list.count >= 3
+    }
+
+    private func formatBinding(_ inst: WidgetInstance) -> Binding<String> {
+        Binding(get: { current(inst).formatString ?? "" },
+                set: { var c = current(inst); c.formatString = $0; settings.updateWidget(c) })
+    }
+
+    private func sensorChoices(_ inst: WidgetInstance) -> [String] {
+        var names = MenuBarReading.availableSensorNames(engine.sensors)
+        if let saved = current(inst).sensorName, !names.contains(saved) { names.append(saved) }
+        return names
+    }
+
+    private func sensorNameBinding(_ inst: WidgetInstance) -> Binding<String> {
+        Binding(get: { current(inst).sensorName ?? sensorChoices(inst).first ?? "" },
+                set: { var c = current(inst); c.sensorName = $0
+                    if (c.sensorLabel ?? "").isEmpty { c.sensorLabel = String($0.prefix(3)) }
+                    settings.updateWidget(c) })
+    }
+
+    private func sensorLabelBinding(_ inst: WidgetInstance) -> Binding<String> {
+        Binding(get: { current(inst).sensorLabel ?? "" },
+                set: { var c = current(inst); c.sensorLabel = String($0.prefix(3)); settings.updateWidget(c) })
+    }
+
+    private func seedSensorIfNeeded(_ inst: WidgetInstance) {
+        let c = current(inst)
+        guard c.sensorName == nil, let first = MenuBarReading.availableSensorNames(engine.sensors).first else { return }
+        var updated = c
+        updated.sensorName = first
+        if (updated.sensorLabel ?? "").isEmpty { updated.sensorLabel = String(first.prefix(3)) }
+        settings.updateWidget(updated)
+    }
+
+    private func fanBinding(_ inst: WidgetInstance) -> Binding<Int?> {
+        Binding(get: { current(inst).fanIndex },
+                set: { var c = current(inst); c.fanIndex = $0; settings.updateWidget(c) })
     }
 }
