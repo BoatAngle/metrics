@@ -86,7 +86,7 @@ final class FanControl {
                 clearCurveState()
                 manualFans.removeAll()
                 if hadControl {
-                    Task { _ = await Self.run(Self.helperPath, ["auto", "all"]) }
+                    Task { await Self.sendAutoAll() }
                 }
             case .quiet, .balanced, .performance:
                 guard canControlFans else {
@@ -99,7 +99,7 @@ final class FanControl {
             case .manual:
                 stopCurveLoop()
                 if curveEngaged {
-                    Task { _ = await Self.run(Self.helperPath, ["auto", "all"]) }
+                    Task { await Self.sendAutoAll() }
                 }
                 clearCurveState()
             }
@@ -308,9 +308,16 @@ final class FanControl {
         clearCurveState()
         lastError = message
         if wasEngaged {
-            _ = await Self.run(Self.helperPath, ["auto", "all"])
+            await Self.sendAutoAll()
             manualFans.removeAll()
         }
+    }
+
+    /// Returns every fan to Apple's automatic control, best-effort.
+    /// (restoreAllAutoOnQuit keeps its own synchronous Process version —
+    /// applicationWillTerminate cannot await.)
+    private nonisolated static func sendAutoAll() async {
+        _ = await run(helperPath, ["auto", "all"])
     }
 
     // MARK: - Process plumbing

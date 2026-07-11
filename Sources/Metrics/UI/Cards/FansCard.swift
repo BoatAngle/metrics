@@ -116,29 +116,16 @@ struct FansCard: View {
                 }
             }
             if fans.effectiveMode == .manual {
-                Slider(value: sliderBinding(for: fan),
+                Slider(value: fanSliderBinding(for: fan, store: sliderRPM.projectedValue),
                        in: fan.controlRange,
                        onEditingChanged: { editing in
                            guard !editing else { return }
-                           let rpm = sliderValue(for: fan)
+                           let rpm = fan.clampedSliderValue(sliderRPM.wrappedValue[fan.id])
                            Task { await fans.setManual(fan: fan.id, rpm: rpm) }
                        })
                 .controlSize(.mini)
                 .disabled(!fans.canControlFans)
             }
         }
-    }
-
-    // MARK: Slider state
-
-    private func sliderValue(for fan: FanInfo) -> Double {
-        fan.clampedSliderValue(sliderRPM.wrappedValue[fan.id])
-    }
-
-    private func sliderBinding(for fan: FanInfo) -> Binding<Double> {
-        Binding(
-            get: { sliderValue(for: fan) },
-            set: { sliderRPM.wrappedValue[fan.id] = $0 }
-        )
     }
 }

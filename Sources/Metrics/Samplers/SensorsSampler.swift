@@ -42,7 +42,7 @@ final class SensorsSampler {
         // hotspot (averaging idle E-cores with loaded P-cores reads too cool).
         let coreVals = tempKeys.filter { $0.hasPrefix("Tp") }.compactMap(readTemp)
         if !coreVals.isEmpty {
-            snap.cpuTempC = coreVals.reduce(0, +) / Double(coreVals.count)
+            snap.cpuTempC = average(coreVals)
             snap.cpuTempMaxC = coreVals.max()
         } else {
             snap.cpuTempC = Self.intelCPUKeys.lazy.compactMap(readTemp).first
@@ -52,7 +52,7 @@ final class SensorsSampler {
         // GPU: "Tg…" on Apple Silicon, "TG…" on Intel.
         let gpuVals = tempKeys.filter { $0.lowercased().hasPrefix("tg") }.compactMap(readTemp)
         if !gpuVals.isEmpty {
-            snap.gpuTempC = gpuVals.reduce(0, +) / Double(gpuVals.count)
+            snap.gpuTempC = average(gpuVals)
             snap.gpuTempMaxC = gpuVals.max()
         }
 
@@ -92,9 +92,14 @@ final class SensorsSampler {
         // Apple Silicon airflow sensors.
         let airflow = ["TaLP", "TaRP"].compactMap(readTemp)
         if !airflow.isEmpty {
-            add("Airflow", airflow.reduce(0, +) / Double(airflow.count))
+            add("Airflow", average(airflow))
         }
         return extras
+    }
+
+    /// Mean of a non-empty array (callers guard emptiness).
+    private func average(_ values: [Double]) -> Double {
+        values.reduce(0, +) / Double(values.count)
     }
 
     private func fans(_ smc: SMCConnection) -> [FanInfo] {

@@ -380,17 +380,17 @@ private struct FansSettingsTab: View {
             switch fans.effectiveMode {
             case .manual:
                 LabeledContent {
-                    Slider(value: sliderBinding(for: fan),
+                    Slider(value: fanSliderBinding(for: fan, store: sliderRPM.projectedValue),
                            in: fan.controlRange,
                            onEditingChanged: { editing in
                                guard !editing else { return }
-                               let rpm = sliderValue(for: fan)
+                               let rpm = fan.clampedSliderValue(sliderRPM.wrappedValue[fan.id])
                                Task { await fans.setManual(fan: fan.id, rpm: rpm) }
                            })
                     .disabled(!fans.canControlFans)
                 } label: {
                     Text("Target")
-                    Text("\(Int(sliderValue(for: fan)).formatted()) rpm")
+                    Text("\(Int(fan.clampedSliderValue(sliderRPM.wrappedValue[fan.id])).formatted()) rpm")
                 }
             case .quiet, .balanced, .performance:
                 LabeledContent("Curve target", value: curveTargetText(for: fan))
@@ -403,16 +403,5 @@ private struct FansSettingsTab: View {
     private func curveTargetText(for fan: FanInfo) -> String {
         guard let rpm = fans.currentTargets[fan.id] else { return "—" }
         return "\(Int(rpm.rounded()).formatted()) rpm"
-    }
-
-    private func sliderValue(for fan: FanInfo) -> Double {
-        fan.clampedSliderValue(sliderRPM.wrappedValue[fan.id])
-    }
-
-    private func sliderBinding(for fan: FanInfo) -> Binding<Double> {
-        Binding(
-            get: { sliderValue(for: fan) },
-            set: { sliderRPM.wrappedValue[fan.id] = $0 }
-        )
     }
 }

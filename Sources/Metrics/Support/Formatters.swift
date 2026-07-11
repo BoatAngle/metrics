@@ -23,15 +23,18 @@ enum Fmt {
         return "\(mins)m"
     }
 
-    /// Temperature with unit conversion.
+    /// Temperature with unit suffix ("53°C" / "127°F").
     static func temp(_ celsius: Double, fahrenheit: Bool) -> String {
-        if fahrenheit { return String(format: "%.0f°F", celsius * 9 / 5 + 32) }
-        return String(format: "%.0f°C", celsius)
+        String(format: fahrenheit ? "%.0f°F" : "%.0f°C", converted(celsius, fahrenheit: fahrenheit))
     }
 
     /// Degrees-only temperature ("53°"), unit implied by context.
     static func tempShort(_ celsius: Double, fahrenheit: Bool) -> String {
-        String(format: "%.0f°", fahrenheit ? celsius * 9 / 5 + 32 : celsius)
+        String(format: "%.0f°", converted(celsius, fahrenheit: fahrenheit))
+    }
+
+    private static func converted(_ celsius: Double, fahrenheit: Bool) -> Double {
+        fahrenheit ? celsius * 9 / 5 + 32 : celsius
     }
 
     private static let mediumDate: DateFormatter = {

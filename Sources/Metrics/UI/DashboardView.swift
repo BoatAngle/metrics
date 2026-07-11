@@ -107,22 +107,18 @@ struct DashboardView: View {
             Divider()
             ScrollView {
                 VStack(spacing: 10) {
-                    ForEach(visibleCards) { kind in
+                    ForEach(settings.visibleCards) { kind in
                         MetricCardView(kind: kind)
                             .cardReorderable(kind, dragging: draggingCard.projectedValue)
                     }
                 }
                 .padding(12)
-                .animation(.default, value: visibleCards)
+                .animation(.default, value: settings.visibleCards)
                 .onDrop(of: [.text],
                         delegate: CardDropResetDelegate(dragging: draggingCard.projectedValue))
             }
         }
         .frame(width: 360, height: 580)
-    }
-
-    private var visibleCards: [CardKind] {
-        settings.cardOrder.filter { !settings.hiddenCards.contains($0) }
     }
 
     private var header: some View {
@@ -226,13 +222,9 @@ struct DashboardWindowView: View {
                 .frame(maxWidth: .infinity, alignment: .top)
             }
         }
-        .animation(.default, value: visibleCards)
+        .animation(.default, value: settings.visibleCards)
         .onDrop(of: [.text],
                 delegate: CardDropResetDelegate(dragging: draggingCard.projectedValue))
-    }
-
-    private var visibleCards: [CardKind] {
-        settings.cardOrder.filter { !settings.hiddenCards.contains($0) }
     }
 
     /// Greedy shortest-column packing by estimated card height, so the two
@@ -240,7 +232,7 @@ struct DashboardWindowView: View {
     private var balancedColumns: [[CardKind]] {
         var columns: [[CardKind]] = [[], []]
         var heights: [CGFloat] = [0, 0]
-        for kind in visibleCards {
+        for kind in settings.visibleCards {
             let target = heights[0] <= heights[1] ? 0 : 1
             columns[target].append(kind)
             heights[target] += kind.estimatedCardHeight

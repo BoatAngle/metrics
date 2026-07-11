@@ -111,6 +111,11 @@ final class SettingsStore {
     /// Cards floating on the desktop as real-time widgets.
     var desktopWidgets: Set<CardKind> { didSet { save() } }
 
+    /// Dashboard cards in display order with hidden ones filtered out.
+    var visibleCards: [CardKind] {
+        cardOrder.filter { !hiddenCards.contains($0) }
+    }
+
     private var loaded = false
 
     private init() {

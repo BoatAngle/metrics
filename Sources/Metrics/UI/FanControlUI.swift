@@ -32,6 +32,15 @@ func fanCurveStatusText(engine: MetricsEngine, fans: FanControl,
     return "Hotspot \(temp) → " + targets.joined(separator: " · ")
 }
 
+/// A manual-fan slider binding backed by a per-view `[fanID: rpm]` store:
+/// reads the clamped value, writes the raw drag value.
+func fanSliderBinding(for fan: FanInfo, store: Binding<[Int: Double]>) -> Binding<Double> {
+    Binding(
+        get: { fan.clampedSliderValue(store.wrappedValue[fan.id]) },
+        set: { store.wrappedValue[fan.id] = $0 }
+    )
+}
+
 extension FanInfo {
     /// Slider range: the fan's reported min…max, falling back to a sane
     /// 1200…6000 when the SMC omits limits or reports an inverted range.

@@ -104,6 +104,8 @@ final class MetricsEngine {
     private(set) var downHistory = RingBuffer(capacity: 120)
     private(set) var upHistory = RingBuffer(capacity: 120)
 
+    /// How often a fresh snapshot is written for the WidgetKit extension.
+    private static let widgetPublishInterval: TimeInterval = 30
     @ObservationIgnored private var lastWidgetPublish = Date.distantPast
 
     func start(interval: Double) {
@@ -148,7 +150,7 @@ final class MetricsEngine {
         if let v = b.device { device = v }
         if let v = b.networkData { networkData = v }
 
-        if Date().timeIntervalSince(lastWidgetPublish) >= 30 {
+        if Date().timeIntervalSince(lastWidgetPublish) >= Self.widgetPublishInterval {
             lastWidgetPublish = Date()
             WidgetPublisher.publish(from: self)
         }
