@@ -12,6 +12,8 @@ No accounts, no tracking, nothing phones home.
 
 ### [⬇︎ Download the latest version](https://github.com/BoatAngle/metrics/releases/latest)
 
+<img src="docs/dashboard.png" width="820" alt="The Metrics dashboard showing processor, graphics, fan control, memory, network, sensors, battery, and process cards">
+
 </div>
 
 ---

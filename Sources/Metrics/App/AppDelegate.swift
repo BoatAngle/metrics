@@ -9,6 +9,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             DumpRunner.run()
             return
         }
+        // Single instance: if another copy of Metrics (same bundle id, e.g. a
+        // second launch or a build in a different folder) is already running,
+        // focus it and exit instead of adding a second menu bar item.
+        if let bundleID = Bundle.main.bundleIdentifier {
+            let mine = NSRunningApplication.current.processIdentifier
+            let existing = NSRunningApplication
+                .runningApplications(withBundleIdentifier: bundleID)
+                .first { $0.processIdentifier != mine }
+            if let existing {
+                existing.activate()
+                return
+            }
+        }
         let app = NSApplication.shared
         let delegate = AppDelegate()
         app.delegate = delegate
