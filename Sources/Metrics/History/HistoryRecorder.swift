@@ -29,6 +29,10 @@ enum HistoryMetric {
 final class HistoryRecorder {
     private static let diskRecordInterval: TimeInterval = 5 * 60
     private var lastDiskRecord = Date.distantPast
+    /// Battery max-capacity % and cycle count move over days, so they're
+    /// recorded once per local day (feature #27); everything the day-scale
+    /// health timeline needs is the daily point.
+    private var lastHealthDay: Date? = nil
 
     func record(_ bundle: SampleBundle) {
         var samples: [(metric: String, value: Double)] = []
@@ -67,8 +71,18 @@ final class HistoryRecorder {
         if let v = bundle.battery, v.hasBattery {
             samples.append((HistoryMetric.batteryPercent, v.percent))
             if let watts = v.watts { samples.append((HistoryMetric.batteryWatts, watts)) }
-            if let health = v.healthPercent { samples.append((HistoryMetric.batteryHealth, health)) }
-            if let cycles = v.cycleCount { samples.append((HistoryMetric.batteryCycles, Double(cycles))) }
+            // Health & cycles: one point per day is all the timeline needs.
+            let today = Calendar.current.startOfDay(for: Date())
+            if lastHealthDay != today {
+                var recorded = false
+                if let health = v.healthPercent {
+                    samples.append((HistoryMetric.batteryHealth, health)); recorded = true
+                }
+                if let cycles = v.cycleCount {
+                    samples.append((HistoryMetric.batteryCycles, Double(cycles))); recorded = true
+                }
+                if recorded { lastHealthDay = today }
+            }
         }
         if let v = bundle.disk, Date().timeIntervalSince(lastDiskRecord) >= Self.diskRecordInterval {
             lastDiskRecord = Date()

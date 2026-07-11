@@ -10,7 +10,7 @@ final class FanControl {
 
     static let helperPath = "/Library/Application Support/Metrics/metrics-fan-helper"
     /// Must match `helperVersion` in the helper's main.swift.
-    static let expectedHelperVersion = 2
+    static let expectedHelperVersion = 3
 
     private(set) var helperInstalled = false
     /// Installed but older than the app expects — offer a reinstall.

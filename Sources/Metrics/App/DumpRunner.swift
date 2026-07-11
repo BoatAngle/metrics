@@ -1,4 +1,5 @@
 import Foundation
+import SMCCore
 
 /// `Metrics --dump`: sample every subsystem once (twice for rate-based ones,
 /// 1 s apart), print human-readable values, exit. No GUI — a sanity check that
@@ -107,6 +108,15 @@ enum DumpRunner {
             print("\n[Battery] \(String(format: "%.0f%%", b.percent))  charging=\(b.isCharging) plugged=\(b.isPluggedIn)")
             print("          W \(opt(b.watts))  A \(opt(b.amperage))  V \(opt(b.voltage))  cycles \(b.cycleCount.map(String.init) ?? "–")  health \(opt(b.healthPercent))%  temp \(opt(b.temperatureC))°C")
             print("          adapter: \(b.adapterDescription ?? "–")")
+            // Charge-limit (feature #11): verify the SMC exposes CHWA before the
+            // toggle ships. ui8 1 = cap ~80%, 0 = normal.
+            let smc = SMCConnection()
+            if smc?.keyInfo("CHWA") != nil {
+                let chwa = smc?.readKey("CHWA")?.doubleValue
+                print("          charge-limit: CHWA present, value \(chwa.map { String(Int($0)) } ?? "?") (\(chwa == 1 ? "limited to 80%" : "normal"))")
+            } else {
+                print("          charge-limit: CHWA not present — feature hidden")
+            }
         } else {
             print("\n[Battery] none")
         }

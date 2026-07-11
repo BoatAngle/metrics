@@ -3,7 +3,7 @@ import SMCCore
 
 // Bump on any behavior change so the app can prompt to reinstall an older
 // installed copy. Must match FanControl.expectedHelperVersion.
-let helperVersion = 2
+let helperVersion = 3
 
 func fail(_ message: String, code: Int32) -> Never {
     FileHandle.standardError.write(Data(("error: " + message + "\n").utf8))
@@ -18,7 +18,7 @@ func requireRoot() {
 
 let args = CommandLine.arguments
 guard args.count >= 2 else {
-    fail("usage: metrics-fan-helper version | status | set <index> <rpm> | auto <index|all>", code: 1)
+    fail("usage: metrics-fan-helper version | status | set <index> <rpm> | auto <index|all> | chargelimit <0|1>", code: 1)
 }
 
 // Answerable without touching the SMC (and without root).
@@ -88,6 +88,12 @@ case "status":
         }
         print("\(i) actual=\(Int(actual)) min=\(Int(minRPM)) max=\(Int(maxRPM)) mode=\(mode)")
     }
+    // Battery charge-limit state (SMC "CHWA": 1 = cap ~80%, 0 = normal).
+    if smc.keyInfo("CHWA") != nil, let chwa = smc.readKey("CHWA")?.doubleValue {
+        print("chargelimit chwa=\(Int(chwa))")
+    } else {
+        print("chargelimit chwa=unsupported")
+    }
     exit(0)
 
 case "set":
@@ -136,6 +142,20 @@ case "auto":
         }
     }
     print("ok")
+    exit(0)
+
+case "chargelimit":
+    requireRoot()
+    guard args.count == 3, let raw = Int(args[2]), raw == 0 || raw == 1 else {
+        fail("usage: metrics-fan-helper chargelimit <0|1>", code: 1)
+    }
+    guard smc.keyInfo("CHWA") != nil else {
+        fail("CHWA key not present on this Mac", code: 3)
+    }
+    guard writeValue("CHWA", Double(raw)) else {
+        fail("failed to write CHWA", code: 1)
+    }
+    print("ok \(raw)")
     exit(0)
 
 default:

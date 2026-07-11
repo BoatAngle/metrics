@@ -253,7 +253,7 @@ private extension CardKind {
         case .disk: return 300
         case .network: return 340
         case .networkData: return 190
-        case .battery: return 250
+        case .battery: return 310
         case .sensors: return 230
         case .fans: return 200
         case .processes: return 220

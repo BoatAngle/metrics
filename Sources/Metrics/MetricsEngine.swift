@@ -204,7 +204,12 @@ final class MetricsEngine {
             diskWriteHistory.append(v.writeBytesPerSec)
         }
         if let v = b.driveHealth { driveHealth = v }
-        if let v = b.battery { battery = v }
+        if let v = b.battery {
+            battery = v
+            // End a one-time "charge to 100%" once the pack is full or unplugged.
+            BatteryChargeControl.shared.evaluateAutoReenable(percent: v.percent,
+                                                             isPluggedIn: v.isPluggedIn)
+        }
         if let v = b.sensors {
             sensors = v
             if let hotspot = v.hotspotC { hotspotHistory.append(hotspot) }

@@ -382,6 +382,60 @@ struct BatterySnapshot {
     static let empty = BatterySnapshot()
 }
 
+// MARK: - Battery health projection
+
+/// Projection of when battery max-capacity health decays to 80% (the common
+/// "service" threshold), from the recorded daily health-% history (feature
+/// #27). Deliberately conservative: nothing is claimed until there are ≥14
+/// daily points with a real downward trend that fits well.
+enum BatteryHealthProjection: Equatable {
+    case collecting                  // fewer than 2 points — nothing to chart yet
+    case noProjection                // enough to chart, but no reliable forecast
+    case reaches80(date: Date)       // linear fit crosses 80% on this date
+
+    /// Minimum daily points before a projection is even attempted.
+    static let minPointsForProjection = 14
+
+    /// Least-squares fit of health-% per day. Reports `.reaches80` only when the
+    /// trend is downward, fits reasonably well (guards against noise), health is
+    /// still above 80, and the crossing lands in a sensible future horizon.
+    /// `points` are the daily health rollups from HistoryStore.
+    static func compute(points: [HistoryPoint], now: Date = Date()) -> BatteryHealthProjection {
+        guard points.count >= 2 else { return .collecting }
+        guard points.count >= minPointsForProjection else { return .noProjection }
+
+        let t0 = points[0].date.timeIntervalSince1970
+        let xs = points.map { ($0.date.timeIntervalSince1970 - t0) / 86400 }  // days
+        let ys = points.map(\.avg)                                            // health %
+        let n = Double(xs.count)
+        let meanX = xs.reduce(0, +) / n
+        let meanY = ys.reduce(0, +) / n
+        var sxx = 0.0, sxy = 0.0, syy = 0.0
+        for i in xs.indices {
+            let dx = xs[i] - meanX, dy = ys[i] - meanY
+            sxx += dx * dx; sxy += dx * dy; syy += dy * dy
+        }
+        guard sxx > 0 else { return .noProjection }
+        let slope = sxy / sxx                       // %/day (negative = declining)
+        let intercept = meanY - slope * meanX
+        let r2 = syy > 0 ? (sxy * sxy) / (sxx * syy) : 0
+        guard slope < 0, r2 >= 0.5 else { return .noProjection }
+
+        // Current health from the fit; only forecast while still above 80.
+        let currentDays = xs.last ?? 0
+        let currentHealth = intercept + slope * currentDays
+        guard currentHealth > 80 else { return .noProjection }
+
+        // Solve intercept + slope·x = 80 for x, back into a calendar date.
+        let daysTo80 = (80 - intercept) / slope
+        let date80 = Date(timeIntervalSince1970: t0 + daysTo80 * 86400)
+        guard date80 > now, date80.timeIntervalSince(now) < 30 * 365 * 86400 else {
+            return .noProjection
+        }
+        return .reaches80(date: date80)
+    }
+}
+
 // MARK: - Sensors (SMC)
 
 struct FanInfo: Identifiable {
