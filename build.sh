@@ -51,6 +51,11 @@ fi
 
 cp "$BIN_DIR/MetricsFanHelper" "$APP_DIR/Contents/Resources/metrics-fan-helper"
 
+# CLI companion (Package 9). Lands next to the main executable so the app can
+# find it, and so a user can symlink it onto their PATH:
+#   ln -s "/Applications/Metrics.app/Contents/MacOS/metricsctl" /usr/local/bin/metricsctl
+cp "$BIN_DIR/metricsctl" "$APP_DIR/Contents/MacOS/metricsctl"
+
 echo "▸ Assembling MetricsWidgets.appex"
 APPEX="$APP_DIR/Contents/Extensions/MetricsWidgets.appex"
 mkdir -p "$APPEX/Contents/MacOS"
@@ -59,6 +64,7 @@ cp Resources/MetricsWidgets-Info.plist "$APPEX/Contents/Info.plist"
 
 echo "▸ Codesigning (ad-hoc)"
 codesign --force --sign - "$APP_DIR/Contents/Resources/metrics-fan-helper"
+codesign --force --sign - "$APP_DIR/Contents/MacOS/metricsctl"
 codesign --force --sign - "$APPEX"
 codesign --force --deep --sign - "$APP_DIR"
 

@@ -9,6 +9,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             DumpRunner.run()
             return
         }
+        // Headless harness for the control socket + metricsctl CLI (Package 9).
+        // Never touches the GUI; exits when done.
+        if CommandLine.arguments.contains("--control-selftest") {
+            ControlSelfTest.run()
+            return
+        }
         // Single instance: if another copy of Metrics (same bundle id, e.g. a
         // second launch or a build in a different folder) is already running,
         // focus it and exit instead of adding a second menu bar item.
@@ -35,6 +41,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var settingsWindow: NSWindow?
     private var dashboardWindow: NSWindow?
 
+    /// Install the `metrics://` GetURL Apple Event handler early, before the
+    /// initial open-URL event that a launch-by-URL delivers. FourCC literals
+    /// ('GURL'/'GURL'/'----') keep us free of Carbon constant imports, matching
+    /// the launch-kind check below.
+    func applicationWillFinishLaunching(_ notification: Notification) {
+        NSAppleEventManager.shared().setEventHandler(
+            self,
+            andSelector: #selector(handleGetURLEvent(_:withReplyEvent:)),
+            forEventClass: AEEventClass(0x4755524C),   // 'GURL' kInternetEventClass
+            andEventID: AEEventID(0x4755524C))         // 'GURL' kAEGetURL
+    }
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         let settings = SettingsStore.shared
         let engine = MetricsEngine.shared
@@ -54,9 +72,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         AlertEngine.shared.load()
         FanControl.shared.engagePersistedModeAtLaunch()
         DesktopWidgetController.shared.start()
+        // Control socket for the metricsctl CLI (Package 9). Best-effort: the
+        // app runs fine without it.
+        MetricsControlServer.shared.start(source: LiveControlSource())
         // Launching by hand (Finder, Spotlight, `open`) shows the dashboard;
-        // a login-item launch stays quietly in the menu bar.
-        if !Self.launchedAsLoginItem {
+        // a login-item launch stays quietly in the menu bar, and a
+        // launch-by-URL lets the URL command decide whether to open a window.
+        if !Self.launchedAsLoginItem && !Self.launchedViaURL {
             showDashboard()
         }
     }
@@ -84,8 +106,58 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     func applicationWillTerminate(_ notification: Notification) {
         // Never leave fans forced after we're gone.
         FanControl.shared.restoreAllAutoOnQuit()
+        MetricsControlServer.shared.stop()
         MetricsEngine.shared.stopMonitors()
         MetricsEngine.shared.stop()
+    }
+
+    // MARK: - URL scheme (metrics://)
+
+    @objc private func handleGetURLEvent(_ event: NSAppleEventDescriptor,
+                                         withReplyEvent: NSAppleEventDescriptor) {
+        guard let string = event.paramDescriptor(forKeyword: AEKeyword(0x2D2D2D2D))?.stringValue, // '----' keyDirectObject
+              let url = URL(string: string) else { return }
+        handleURL(url)
+    }
+
+    /// Executes a parsed `metrics://` command. Unknown commands are logged and
+    /// ignored — never a crash from a stray URL.
+    private func handleURL(_ url: URL) {
+        guard let command = MetricsURLCommand.parse(url) else {
+            NSLog("Metrics: ignoring unrecognized URL %@", url.absoluteString)
+            return
+        }
+        switch command {
+        case .dashboard:
+            showDashboard()
+
+        case .card(let kind):
+            // The card has to be visible to scroll to it; unhide if needed.
+            if SettingsStore.shared.hiddenCards.contains(kind) {
+                SettingsStore.shared.hiddenCards.remove(kind)
+            }
+            showDashboard()
+            // Defer so the freshly shown window observes the nonce change.
+            DispatchQueue.main.async { DashboardNavigator.shared.requestScroll(to: kind) }
+
+        case .fan(let mode):
+            FanControl.shared.mode = mode
+
+        case .focus(let action):
+            // Clean seam for a future in-app Focus mode (package P13). No such
+            // mode exists yet, so log and no-op rather than pretend.
+            NSLog("Metrics: focus/%@ requested — in-app Focus mode not implemented yet; ignoring.",
+                  action.rawValue)
+
+        case .copy(let metric):
+            guard let value = MetricReadout.value(metric, engine: .shared, settings: SettingsStore.shared) else {
+                NSLog("Metrics: copy/%@ — unknown metric; clipboard left unchanged.", metric)
+                return
+            }
+            let pasteboard = NSPasteboard.general
+            pasteboard.clearContents()
+            pasteboard.setString(value, forType: .string)
+        }
     }
 
     // MARK: - Dashboard window
@@ -95,6 +167,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             let root = DashboardWindowView(openSettings: { [weak self] in self?.showSettings() })
                 .environment(MetricsEngine.shared)
                 .environment(SettingsStore.shared)
+                .environment(DashboardNavigator.shared)
             let hosting = NSHostingController(rootView: AnyView(root))
             // macOS Tahoe bug (FB21850950): scrolled content can paint into
             // the titlebar zone. The mitigation is twofold: a
@@ -192,5 +265,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         guard let event = NSAppleEventManager.shared().currentAppleEvent else { return false }
         return event.eventID == AEEventID(0x6F617070)
             && event.paramDescriptor(forKeyword: AEKeyword(0x70726474))?.enumCodeValue == OSType(0x6C676974)
+    }
+
+    /// True when this instance was launched to open a `metrics://` URL ('GURL').
+    /// The URL handler then decides whether to surface a window, so we skip the
+    /// unconditional dashboard show at launch.
+    private static var launchedViaURL: Bool {
+        guard let event = NSAppleEventManager.shared().currentAppleEvent else { return false }
+        return event.eventID == AEEventID(0x4755524C) // 'GURL'
     }
 }

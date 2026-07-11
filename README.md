@@ -56,6 +56,36 @@ right-click it for Settings and Quit.
 - **Apple widget gallery** — System, Battery, and Network widgets for macOS's
   own widget gallery too.
 
+## Automation
+
+Metrics can be driven from other apps, scripts, and Raycast/Alfred workflows.
+
+**`metrics://` URL scheme** — open with `open metrics://…` or from any launcher:
+
+| URL | Action |
+| --- | --- |
+| `metrics://dashboard` | Bring the dashboard window forward |
+| `metrics://card/<kind>` | Open the dashboard scrolled to a card (`cpu`, `gpu`, `power`, `memory`, `disk`, `network`, `network_data`, `battery`, `sensors`, `fans`, `processes`, `bluetooth`, `device`) |
+| `metrics://fan/<mode>` | Switch fan mode (`auto`, `quiet`, `balanced`, `performance`, `manual`) |
+| `metrics://copy/<metric>` | Copy a metric's current value to the clipboard (`cpu`, `gpu`, `memory`, `hotspot`, `ip`, …) |
+
+**`metricsctl` command-line tool** — ships inside the app bundle. Symlink it onto your `PATH`:
+
+```sh
+ln -s "/Applications/Metrics.app/Contents/MacOS/metricsctl" /usr/local/bin/metricsctl
+```
+
+```sh
+metricsctl get cpu          # 12%
+metricsctl json             # full snapshot as JSON
+metricsctl fan quiet        # set the fan mode
+metricsctl watch cpu        # stream the value once per second (Ctrl-C to stop)
+```
+
+It talks to the running app over a Unix-domain socket at
+`~/Library/Application Support/Metrics/metricsctl.sock`, so Metrics has to be
+running.
+
 ## About fan control
 
 Changing fan speeds requires administrator access (macOS doesn't allow apps to

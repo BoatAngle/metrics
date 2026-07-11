@@ -34,5 +34,16 @@
 	<string>Metrics shows battery levels for your connected Bluetooth devices.</string>
 	<key>NSHumanReadableCopyright</key>
 	<string>Personal build — not for distribution.</string>
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleURLName</key>
+			<string>com.harrisonbraun.metrics.url</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>metrics</string>
+			</array>
+		</dict>
+	</array>
 </dict>
 </plist>

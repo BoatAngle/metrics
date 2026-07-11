@@ -45,5 +45,11 @@ let package = Package(
                 .linkedFramework("IOKit"),
             ]
         ),
+        // Tiny Foundation-only CLI companion (Package 9). Talks to the app's
+        // control socket; no SwiftUI, no shared code.
+        .executableTarget(
+            name: "metricsctl",
+            path: "Sources/metricsctl"
+        ),
     ]
 )

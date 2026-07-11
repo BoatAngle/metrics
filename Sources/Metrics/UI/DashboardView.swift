@@ -157,6 +157,7 @@ struct DashboardView: View {
 struct DashboardWindowView: View {
     @Environment(MetricsEngine.self) private var engine
     @Environment(SettingsStore.self) private var settings
+    @Environment(DashboardNavigator.self) private var navigator
     var openSettings: () -> Void
 
     // Plain State (not @State): the macro form needs the SwiftUIMacros plugin,
@@ -170,12 +171,20 @@ struct DashboardWindowView: View {
             // edge touches the content view's top bleeds its scrolled rows
             // into the titlebar. One point of breathing room prevents it.
             Color.clear.frame(height: 1)
-            ScrollView {
-                VStack(alignment: .leading, spacing: 16) {
-                    header
-                    masonry
+            ScrollViewReader { proxy in
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 16) {
+                        header
+                        masonry
+                    }
+                    .padding(20)
                 }
-                .padding(20)
+                // Driven by metrics://card/<kind>: scroll the requested card to
+                // the top whenever the navigator bumps its nonce.
+                .onChange(of: navigator.scrollNonce) {
+                    guard let target = navigator.scrollTarget else { return }
+                    withAnimation { proxy.scrollTo(target, anchor: .top) }
+                }
             }
         }
         // Empty edge set: don't let the background bleed into the titlebar,
@@ -218,6 +227,7 @@ struct DashboardWindowView: View {
                     ForEach(balancedColumns[column]) { kind in
                         MetricCardView(kind: kind)
                             .cardReorderable(kind, dragging: draggingCard.projectedValue)
+                            .id(kind) // scroll target for metrics://card/<kind>
                     }
                 }
                 .frame(maxWidth: .infinity, alignment: .top)
