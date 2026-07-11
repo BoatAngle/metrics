@@ -36,6 +36,7 @@ final class SamplerLoop {
     private let bluetoothSampler = BluetoothSampler()
     private let deviceProvider = DeviceInfoProvider()
     private let dataStore = NetworkDataStore()
+    private let historyRecorder = HistoryRecorder()
 
     func start(interval: Double, handler: @escaping (SampleBundle) -> Void) {
         stop()
@@ -76,6 +77,9 @@ final class SamplerLoop {
             dataStore.flush()
         }
         tick += 1
+        // Cheap append into the local history DB (real work happens on the
+        // store's own queue).
+        historyRecorder.record(bundle)
         handler(bundle)
     }
 }

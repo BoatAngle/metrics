@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// Settings window content: six tabs of standard Form controls.
+/// Settings window content: seven tabs of standard Form controls.
 struct SettingsView: View {
     @Environment(MetricsEngine.self) private var engine
     @Environment(SettingsStore.self) private var settings
@@ -17,6 +17,8 @@ struct SettingsView: View {
                 .tabItem { Label("Fans", systemImage: "fanblades") }
             widgetsTab
                 .tabItem { Label("Widgets", systemImage: "square.on.square.dashed") }
+            DataSettingsTab()
+                .tabItem { Label("Data", systemImage: "cylinder.split.1x2") }
             aboutTab
                 .tabItem { Label("About", systemImage: "info.circle") }
         }
@@ -250,6 +252,70 @@ struct SettingsView: View {
         }
         .padding(24)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+}
+
+// MARK: - Data
+
+/// History-database section: size on disk, retention policy, delete-all.
+private struct DataSettingsTab: View {
+    // Plain State (not @State): the macro form needs the SwiftUIMacros plugin,
+    // which the Command Line Tools toolchain doesn't ship. SwiftUI picks up
+    // stored DynamicProperty values by reflection, so this behaves the same.
+    private var dbSizeBytes = State(initialValue: UInt64?.none)
+    private var confirmingDelete = State(initialValue: false)
+    private var deleting = State(initialValue: false)
+
+    var body: some View {
+        Form {
+            Section {
+                LabeledContent("Size on disk",
+                               value: dbSizeBytes.wrappedValue.map { Fmt.bytes($0) } ?? "—")
+                LabeledContent("Location") {
+                    Text("~/Library/Application Support/Metrics/history.sqlite")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .textSelection(.enabled)
+                }
+            } header: {
+                Text("History database")
+            } footer: {
+                Text("Metrics records CPU, GPU, memory, temperature, fan, network, disk and battery history locally — nothing leaves this Mac. Raw samples are kept for 2 hours, per-minute summaries for 7 days, per-hour summaries for 90 days, and daily summaries forever.")
+            }
+            Section {
+                Button("Delete All History…", role: .destructive) {
+                    confirmingDelete.wrappedValue = true
+                }
+                .disabled(deleting.wrappedValue)
+            } footer: {
+                Text("Removes every recorded sample and summary. Recording starts over immediately.")
+            }
+        }
+        .formStyle(.grouped)
+        .onAppear { refreshSize() }
+        .confirmationDialog("Delete all recorded history?",
+                            isPresented: confirmingDelete.projectedValue,
+                            titleVisibility: .visible) {
+            Button("Delete All History", role: .destructive) { deleteAll() }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Every recorded sample and summary will be removed. This cannot be undone.")
+        }
+    }
+
+    private func refreshSize() {
+        Task { @MainActor in
+            dbSizeBytes.wrappedValue = await HistoryStore.shared.databaseSizeBytes()
+        }
+    }
+
+    private func deleteAll() {
+        deleting.wrappedValue = true
+        Task { @MainActor in
+            await HistoryStore.shared.deleteAllHistory()
+            dbSizeBytes.wrappedValue = await HistoryStore.shared.databaseSizeBytes()
+            deleting.wrappedValue = false
+        }
     }
 }
 

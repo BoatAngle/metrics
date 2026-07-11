@@ -85,6 +85,30 @@ enum DumpRunner {
         let nd = store.snapshot()
         print("\n[NetworkData] today ↓\(Fmt.bytes(nd.today.down)) ↑\(Fmt.bytes(nd.today.up))  yesterday \(Fmt.bytes(nd.yesterday.total))  7d \(Fmt.bytes(nd.last7Days.total))  30d \(Fmt.bytes(nd.last30Days.total))")
 
+        // History: push this run's samples through the same recorder the
+        // engine loop uses, force a maintenance pass, and report what landed.
+        var bundle = SampleBundle()
+        bundle.cpu = c
+        bundle.gpu = g
+        bundle.memory = m
+        bundle.network = n
+        bundle.disk = d
+        bundle.battery = b
+        bundle.sensors = s
+        HistoryRecorder().record(bundle)
+        HistoryStore.shared.runMaintenanceSync()
+        let h = HistoryStore.shared.dumpStatsSync()
+        print("\n[History] \(h.path)")
+        print("          raw rows \(h.rawRows)  rollup rows \(h.rollupRows)  size \(Fmt.bytes(h.sizeBytes))")
+        let sem = DispatchSemaphore(value: 0)
+        Task {
+            let series = await HistoryStore.shared.series(metric: HistoryMetric.cpu, window: 3600)
+            let last = series.last.map { String(format: "  last avg %.1f%% (min %.1f, max %.1f)", $0.avg, $0.min, $0.max) } ?? ""
+            print("          cpu 1h series: \(series.count) point(s)\(last)")
+            sem.signal()
+        }
+        sem.wait()
+
         print("\nDone.")
     }
 

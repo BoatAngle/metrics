@@ -18,6 +18,7 @@ let package = Package(
             dependencies: ["SMCCore", "WidgetShared"],
             path: "Sources/Metrics",
             linkerSettings: [
+                .linkedLibrary("sqlite3"),
                 .linkedFramework("IOKit"),
                 .linkedFramework("CoreWLAN"),
                 .linkedFramework("SystemConfiguration"),
