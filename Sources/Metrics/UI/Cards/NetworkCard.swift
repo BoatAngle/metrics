@@ -52,6 +52,10 @@ struct NetworkCard: View {
                 outagesSection
             }
         }
+        // The per-app nettop monitor is costly, so it runs only while this card
+        // is actually on screen (energy fix). Balanced appear/disappear calls.
+        .onAppear { engine.retainNetworkApps() }
+        .onDisappear { engine.releaseNetworkApps() }
     }
 
     // MARK: - Header

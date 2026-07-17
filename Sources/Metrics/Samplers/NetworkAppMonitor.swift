@@ -1,67 +1,94 @@
 import Foundation
 
-/// Per-app network throughput via a single long-lived `nettop` (feature #3).
+/// Per-app network throughput via `nettop` (feature #3).
 ///
-/// `nettop -P -x -J bytes_in,bytes_out -s 5 -l 0` emits a fresh block of
-/// cumulative per-process byte counters every 5 s. Each block begins with a
-/// header line ("… bytes_in bytes_out"); we accumulate a block's rows, and when
-/// the next header arrives we diff that finished block against the previous one
-/// to get per-process rates, aggregate them by app name, and publish the top
-/// talkers. One cheap subprocess for the app's lifetime — no per-tick spawns.
+/// Energy note: this used to run a single never-ending `nettop -l 0`, which
+/// pegs a CPU core for the whole session — even though the "Top apps" list is
+/// only visible while the Network card is on screen. Now the monitor is:
+///   • Gated on demand — `setActive(_:)` starts/stops it as the Network card
+///     appears/disappears, so it costs nothing when nobody's looking.
+///   • Sampled in short one-shot bursts — each cycle runs `nettop -l 2` (two
+///     cumulative snapshots), diffs them into per-app rates, then the process
+///     exits. A finite `-l` can't busy-loop the way `-l 0` over a pipe does,
+///     and the child is gone between cycles.
 final class NetworkAppMonitor {
     /// Ignore anything slower than this so idle background chatter (mDNS,
     /// push) doesn't crowd out real activity; the card hides an empty list.
     private static let idleFloorBytesPerSec: Double = 1024
     /// Cap on how many apps we hand upward (the card shows the top four).
     private static let maxApps = 8
+    /// Seconds between the two snapshots in one burst (also the rate window).
+    private static let sampleSeconds = 2
+    /// Idle gap between bursts, so a visible card refreshes every few seconds
+    /// without the child ever running continuously.
+    private static let cycleGap: TimeInterval = 3
 
     private let queue = DispatchQueue(label: "metrics.netapps", qos: .utility)
     private var process: Process?
     private var readBuffer = Data()
+    /// App is quitting — never relaunch (distinct from merely inactive).
     private var stopped = false
+    /// The Network card is on screen — bursts should keep cycling.
+    private var active = false
 
-    /// Counters keyed by "name.pid" for the previous completed block, plus when
-    /// it was finalized, so rates use real elapsed wall-clock time.
+    /// Counters keyed by "name.pid" for the previous snapshot, plus when it was
+    /// finalized, so rates use real elapsed wall-clock time.
     private var previousCounters: [String: (down: UInt64, up: UInt64)] = [:]
     private var previousTime: DispatchTime?
-    /// Counters accumulating for the block currently being read.
+    /// Counters accumulating for the snapshot currently being read.
     private var currentCounters: [String: (down: UInt64, up: UInt64)] = [:]
     private var sawHeader = false
 
     private var handler: (([AppNetworkUsage]) -> Void)?
 
-    /// Starts (or restarts) the monitor. `handler` is invoked on a background
-    /// queue whenever a new rate sample is computed.
+    /// Registers the sink. Does NOT start sampling — the monitor stays idle
+    /// until `setActive(true)` (i.e. until the Network card is shown).
     func start(handler: @escaping ([AppNetworkUsage]) -> Void) {
         queue.async { [self] in
             self.handler = handler
             stopped = false
-            launch()
         }
     }
 
-    /// Terminates the subprocess and stops publishing. Synchronous so the
-    /// nettop child is gone before the app exits (an async hop might not run).
+    /// Turns burst sampling on/off as the Network card appears/disappears.
+    /// Idempotent: redundant calls are ignored. When switched off, any running
+    /// `nettop` is killed and the "Top apps" list is cleared.
+    func setActive(_ shouldRun: Bool) {
+        queue.async { [self] in
+            guard !stopped, shouldRun != active else { return }
+            active = shouldRun
+            if active {
+                beginCycle()
+            } else {
+                teardown()
+                resetParseState()
+                handler?([])  // card empties out when it's no longer watched
+            }
+        }
+    }
+
+    /// Terminates the subprocess and stops publishing for good. Synchronous so
+    /// the nettop child is gone before the app exits.
     func stop() {
         queue.sync { [self] in
             stopped = true
+            active = false
             teardown()
         }
     }
 
-    // MARK: - Subprocess lifecycle (queue-confined)
+    // MARK: - Burst lifecycle (queue-confined)
 
-    private func launch() {
+    private func beginCycle() {
         teardown()
-        readBuffer.removeAll(keepingCapacity: true)
-        currentCounters.removeAll(keepingCapacity: true)
-        previousCounters.removeAll(keepingCapacity: true)
-        previousTime = nil
-        sawHeader = false
+        resetParseState()
 
         let task = Process()
         task.executableURL = URL(fileURLWithPath: "/usr/bin/nettop")
-        task.arguments = ["-P", "-x", "-J", "bytes_in,bytes_out", "-s", "5", "-l", "0"]
+        // -l 2: two snapshots then exit (one diff). A finite count keeps nettop
+        // from spinning the way -l 0 does when its stdout is a pipe.
+        task.arguments = ["-P", "-x", "-J", "bytes_in,bytes_out",
+                          "-s", String(Self.sampleSeconds), "-l", "2"]
         let pipe = Pipe()
         task.standardOutput = pipe
         task.standardError = FileHandle.nullDevice
@@ -73,7 +100,7 @@ final class NetworkAppMonitor {
         }
         task.terminationHandler = { [weak self] _ in
             guard let self else { return }
-            self.queue.async { self.handleTermination() }
+            self.queue.async { self.handleCycleEnd() }
         }
 
         do {
@@ -93,14 +120,23 @@ final class NetworkAppMonitor {
         process = nil
     }
 
-    /// nettop died on its own (not via `stop`): retry once after a short delay
-    /// so a transient failure doesn't kill the feature for the whole session.
-    private func handleTermination() {
-        guard !stopped else { return }
+    private func resetParseState() {
+        readBuffer.removeAll(keepingCapacity: true)
+        currentCounters.removeAll(keepingCapacity: true)
+        previousCounters.removeAll(keepingCapacity: true)
+        previousTime = nil
+        sawHeader = false
+    }
+
+    /// One burst finished (nettop exited). Flush the final snapshot into a rate
+    /// sample, then — if still active — schedule the next burst after a gap.
+    private func handleCycleEnd() {
+        if sawHeader { finishBlock() }  // the last block has no trailing header to flush it
         process = nil
-        queue.asyncAfter(deadline: .now() + 5) { [self] in
-            guard !stopped else { return }
-            launch()
+        guard active, !stopped else { return }
+        queue.asyncAfter(deadline: .now() + Self.cycleGap) { [self] in
+            guard active, !stopped else { return }
+            beginCycle()
         }
     }
 

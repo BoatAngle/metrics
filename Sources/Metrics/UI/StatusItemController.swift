@@ -2,12 +2,6 @@ import AppKit
 import Observation
 import SwiftUI
 
-/// Hosting view that never intercepts clicks — the status bar button
-/// underneath handles them.
-private final class PassthroughHostingView: NSHostingView<AnyView> {
-    override func hitTest(_ point: NSPoint) -> NSView? { nil }
-}
-
 /// Observable pin flag for the dashboard popover (#45). One instance is created
 /// per popover session and thrown away on close, so pinning never persists.
 @Observable @MainActor
@@ -26,13 +20,14 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
     private let openDashboardAction: () -> Void
     private let openSettingsAction: () -> Void
 
-    /// One live status item, keeping its hosting view so a config change can be
-    /// applied in place (no flicker, no lost menu bar position) instead of
-    /// recreating the NSStatusItem.
+    /// One live status item. Its content is a bitmap re-rendered once per sample
+    /// tick (see `image(for:)`), NOT a live NSHostingView: a hosted SwiftUI view
+    /// inside a status item re-runs a full layout pass every display frame on
+    /// current macOS, burning a CPU core at idle. Drawing to `button.image`
+    /// costs a few milliseconds a second instead.
     private struct Item {
         var instance: WidgetInstance
         let statusItem: NSStatusItem
-        let hosting: NSHostingView<AnyView>
     }
     private var items: [String: Item] = [:]
     /// The lone compact item shown while Focus/Gaming mode collapses the bar (#44).
@@ -93,27 +88,39 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
                 items[inst.id] = makeItem(for: inst)
             }
         }
-        updateTooltips()
+        refreshItems()
     }
 
     private func makeItem(for instance: WidgetInstance) -> Item {
         let statusItem = NSStatusBar.system.statusItem(withLength: MenuBarLayout.width(for: instance))
         statusItem.autosaveName = "metrics.widget.\(instance.id)"
-
-        let hosting = PassthroughHostingView(rootView: rootView(for: instance))
-        hosting.translatesAutoresizingMaskIntoConstraints = false
-
         if let button = statusItem.button {
-            button.addSubview(hosting)
-            NSLayoutConstraint.activate([
-                hosting.centerYAnchor.constraint(equalTo: button.centerYAnchor),
-                hosting.centerXAnchor.constraint(equalTo: button.centerXAnchor),
-            ])
+            button.imagePosition = .imageOnly
+            button.image = image(for: instance, appearance: button.effectiveAppearance)
             button.target = self
             button.action = #selector(handleClick(_:))
             button.sendAction(on: [.leftMouseUp, .rightMouseUp])
         }
-        return Item(instance: instance, statusItem: statusItem, hosting: hosting)
+        return Item(instance: instance, statusItem: statusItem)
+    }
+
+    /// Renders a menu bar item's SwiftUI view to a bitmap for `button.image`.
+    /// Re-rendered each tick so values stay live without a permanently-hosted
+    /// (and permanently-relayout-looping) NSHostingView. Rendered in the menu
+    /// bar's own appearance so `.primary`/`.secondary` resolve to legible
+    /// colors; the colored graphs/reactive tints ride along as-is.
+    private func image(for instance: WidgetInstance, appearance: NSAppearance) -> NSImage? {
+        let isDark = appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+        let content = MenuBarItemView(instance: instance)
+            .environment(engine)
+            .environment(settings)
+            .environment(\.colorScheme, isDark ? .dark : .light)
+            .frame(height: NSStatusBar.system.thickness)
+        let renderer = ImageRenderer(content: content)
+        renderer.scale = NSScreen.main?.backingScaleFactor ?? 2
+        guard let image = renderer.nsImage else { return nil }
+        image.isTemplate = false   // preserve rendered colors (graphs, warn/crit tints)
+        return image
     }
 
     /// The single compact item shown in Focus/Gaming mode. Clicking it (or
@@ -140,20 +147,14 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
         }
     }
 
-    /// Applies a changed configuration to a live item: new width and refreshed
-    /// SwiftUI content, keeping the same NSStatusItem (and its menu bar slot).
+    /// Applies a changed configuration to a live item: new width and redrawn
+    /// content, keeping the same NSStatusItem (and its menu bar slot).
     private func apply(_ instance: WidgetInstance, to entry: Item) {
         entry.statusItem.length = MenuBarLayout.width(for: instance)
-        entry.hosting.rootView = rootView(for: instance)
+        if let button = entry.statusItem.button {
+            button.image = image(for: instance, appearance: button.effectiveAppearance)
+        }
         items[instance.id]?.instance = instance
-    }
-
-    private func rootView(for instance: WidgetInstance) -> AnyView {
-        AnyView(
-            MenuBarItemView(instance: instance)
-                .environment(engine)
-                .environment(settings)
-        )
     }
 
     /// The instance a status bar button belongs to, matched by identity.
@@ -180,13 +181,15 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
         }
     }
 
-    // MARK: Live tooltips (#40)
+    // MARK: Live content (#40 tooltips + per-tick redraw)
 
-    /// Rebuilds every item's tooltip each time the engine publishes new samples.
+    /// Redraws every item's image and tooltip each time the engine publishes
+    /// new samples. This once-per-tick redraw replaces a live NSHostingView,
+    /// which would relayout every display frame (the idle-CPU fix).
     private func observeEngineForTooltips() {
         observeChanges { [weak self] in
             guard let self else { return }
-            // Touch the snapshots the tooltips read so this re-fires each tick.
+            // Touch the snapshots the items read so this re-fires each tick.
             _ = self.engine.cpu
             _ = self.engine.gpu
             _ = self.engine.memory
@@ -198,14 +201,18 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
             _ = self.engine.networkData
             _ = self.engine.processes
         } perform: { [weak self] in
-            self?.updateTooltips()
+            self?.refreshItems()
         }
     }
 
-    private func updateTooltips() {
+    /// Redraws each item's bitmap from the latest samples and refreshes its
+    /// tooltip. Cheap: a handful of small ImageRenderer passes per second.
+    private func refreshItems() {
         for (_, entry) in items {
-            entry.statusItem.button?.toolTip = MenuBarTooltip.text(for: entry.instance,
-                                                                   engine: engine, settings: settings)
+            guard let button = entry.statusItem.button else { continue }
+            button.image = image(for: entry.instance, appearance: button.effectiveAppearance)
+            button.toolTip = MenuBarTooltip.text(for: entry.instance,
+                                                 engine: engine, settings: settings)
         }
     }
 

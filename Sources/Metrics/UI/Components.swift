@@ -129,9 +129,11 @@ struct DonutGauge: View {
     @Environment(\.desktopWidgetStyle) private var widgetStyle
 
     var body: some View {
-        // Ease the arc and roll the numbers between samples (#50). Keyed to the
-        // value itself, so it only animates on a fresh reading — nothing runs
-        // every frame.
+        // Values just snap to each fresh reading — no per-sample easing/numeric
+        // transitions. Those look nice on one gauge, but every card animating
+        // simultaneously on each tick kept SwiftUI's display-link render loop
+        // running continuously (a full re-render every frame), which pegged a
+        // CPU core whenever the dashboard was open. Correctness/energy > polish.
         let clamped = min(max(fraction, 0), 1)
         let arc = widgetStyle?.textTint ?? color
         return ZStack {
@@ -140,20 +142,15 @@ struct DonutGauge: View {
                 .trim(from: 0, to: clamped)
                 .stroke(arc, style: StrokeStyle(lineWidth: lineWidth, lineCap: .round))
                 .rotationEffect(.degrees(-90))
-                .animation(.easeOut(duration: 0.25), value: clamped)
             VStack(spacing: 0) {
                 Text(centerTop)
                     .font(.system(size: size * 0.22, weight: .semibold))
                     .monospacedDigit()
                     .foregroundStyle(widgetStyle?.textTint ?? Color.primary)
-                    .contentTransition(.numericText())
-                    .animation(.easeOut(duration: 0.25), value: centerTop)
                 if let centerBottom {
                     Text(centerBottom)
                         .font(.system(size: size * 0.13))
                         .foregroundStyle(widgetStyle?.textTint ?? Color.secondary)
-                        .contentTransition(.numericText())
-                        .animation(.easeOut(duration: 0.25), value: centerBottom)
                 }
             }
         }
@@ -587,8 +584,6 @@ struct ProgressBar: View {
                 Capsule()
                     .fill(fill)
                     .frame(width: max(height, geo.size.width * min(max(fraction, 0), 1)))
-                    // Ease the fill between samples (#50), keyed to the value.
-                    .animation(.easeOut(duration: 0.25), value: fraction)
             }
         }
         .frame(height: height)

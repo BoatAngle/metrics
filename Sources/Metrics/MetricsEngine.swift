@@ -122,6 +122,9 @@ final class MetricsEngine {
     private(set) var networkData = NetworkDataSnapshot.empty
     /// Top network-using apps (feature #3), refreshed by the nettop monitor.
     private(set) var topNetworkApps: [AppNetworkUsage] = []
+    /// How many visible views currently want the (costly) per-app nettop monitor
+    /// running. The monitor samples only while this is > 0 — see `retain/release`.
+    @ObservationIgnored private var networkAppsDemand = 0
     /// Live connectivity + outage log (feature #9).
     private(set) var connectivity = ConnectivitySnapshot.empty
 
@@ -181,6 +184,21 @@ final class MetricsEngine {
                 MainActor.assumeIsolated { self?.lastWakeDate = Date() }
             }
         }
+    }
+
+    /// Called when a view that shows the per-app network breakdown appears.
+    /// The nettop monitor runs only while at least one such view is on screen,
+    /// so it costs nothing when the Network card isn't being looked at.
+    func retainNetworkApps() {
+        networkAppsDemand += 1
+        if networkAppsDemand == 1 { networkAppMonitor.setActive(true) }
+    }
+
+    /// Balances `retainNetworkApps()` when the view disappears.
+    func releaseNetworkApps() {
+        guard networkAppsDemand > 0 else { return }
+        networkAppsDemand -= 1
+        if networkAppsDemand == 0 { networkAppMonitor.setActive(false) }
     }
 
     func stopMonitors() {
