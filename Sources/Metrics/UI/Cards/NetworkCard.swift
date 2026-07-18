@@ -276,7 +276,10 @@ struct NetworkCard: View {
         var request = URLRequest(url: url)
         request.timeoutInterval = 5
         do {
-            let (data, _) = try await URLSession.shared.data(for: request)
+            // Ephemeral session (no cache/cookies), same hygiene as UpdateChecker.
+            let session = URLSession(configuration: .ephemeral)
+            defer { session.finishTasksAndInvalidate() }
+            let (data, _) = try await session.data(for: request)
             let text = String(data: data, encoding: .utf8)?
                 .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
             return text.isEmpty ? nil : text

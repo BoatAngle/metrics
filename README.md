@@ -11,7 +11,7 @@
 CPU, GPU, memory, disk, network, battery, temperatures, and real fan control —
 in a glanceable menu bar, a full dashboard, live desktop widgets, recorded
 history, analytics, and alerts. No accounts, no tracking — the only network
-request Metrics ever makes is an optional once-a-day update check
+request Metrics makes on its own is an optional once-a-day update check
 ([details below](#privacy)).
 
 ### [⬇︎ Download the latest version](https://github.com/BoatAngle/metrics/releases/latest)
@@ -151,12 +151,14 @@ you quit.
 
 ## Privacy
 
-Nothing phones home. The **only** outbound request Metrics ever makes is an
-optional once-a-day version check against this repo's GitHub Releases — a
+Nothing phones home. The only outbound request Metrics makes **on its own** is
+an optional once-a-day version check against this repo's GitHub Releases — a
 single anonymous HTTPS GET that sends nothing about you or your Mac. It's on
 by default so you hear about fixes, and you can switch it off in
-**Settings → About**. There are no accounts, no analytics, and all recorded
-history stays in local files under `~/Library/Application Support/Metrics/`.
+**Settings → About**. One other request exists, and only when you ask for it:
+the Network card's **"Fetch public IP"** button queries `api64.ipify.org` on
+click. There are no accounts, no analytics, and all recorded history stays in
+local files under `~/Library/Application Support/Metrics/`.
 
 ## Automation
 

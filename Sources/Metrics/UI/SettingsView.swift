@@ -479,7 +479,7 @@ struct SettingsView: View {
                         .foregroundStyle(Color.accentColor)
                     Text("Metrics \(updater.currentVersion ?? "(dev build)")")
                         .font(.system(size: 15, weight: .semibold))
-                    Text("Personal build — every feature free, nothing phones home.")
+                    Text("Every feature free — no accounts, no tracking, no analytics.")
                         .font(.system(size: 12))
                         .foregroundStyle(.secondary)
                         .multilineTextAlignment(.center)
