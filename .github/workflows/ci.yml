@@ -1,0 +1,39 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  build:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Swift version
+        run: swift --version
+
+      - name: Build
+        run: swift build
+
+      - name: Run tests
+        run: ./test.sh
+
+      # --dump prints one sample of every metric and exits; on runner hardware
+      # the app degrades gracefully, so this should exit 0. A watchdog caps it
+      # in case a sampler ever hangs — macOS has no GNU timeout at
+      # /usr/bin/timeout, so use coreutils' gtimeout when present, else
+      # background-and-kill.
+      - name: Smoke test (--dump)
+        run: |
+          if command -v gtimeout >/dev/null 2>&1; then
+            gtimeout 120 .build/debug/Metrics --dump
+          else
+            .build/debug/Metrics --dump & app=$!
+            ( sleep 120; kill "$app" 2>/dev/null ) & watchdog=$!
+            status=0
+            wait "$app" || status=$?
+            kill "$watchdog" 2>/dev/null || true
+            exit "$status"
+          fi

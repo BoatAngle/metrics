@@ -1,0 +1,36 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build universal app bundle
+        run: ./build.sh
+
+      - name: Package DMG
+        run: scripts/make_dmg.sh
+
+      # Release notes: docs/release-notes/<tag>.md when it exists (see the
+      # README in that directory), otherwise GitHub's auto-generated notes.
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          tag="$GITHUB_REF_NAME"
+          notes="docs/release-notes/${tag}.md"
+          args=(--title "Metrics ${tag#v}" --latest)
+          if [ -f "$notes" ]; then
+            args+=(--notes-file "$notes")
+          else
+            args+=(--generate-notes)
+          fi
+          gh release create "$tag" build/Metrics.dmg "${args[@]}"
