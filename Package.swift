@@ -53,5 +53,10 @@ let package = Package(
             name: "metricsctl",
             path: "Sources/metricsctl"
         ),
+        .testTarget(
+            name: "MetricsTests",
+            dependencies: ["Metrics"],
+            path: "Tests/MetricsTests"
+        ),
     ]
 )

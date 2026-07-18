@@ -70,6 +70,10 @@ final class HistoryStore: @unchecked Sendable {
         WidgetSnapshotStore.appSupportDirectory.appendingPathComponent("history.sqlite")
     }
 
+    /// Where this instance's database lives. The shared store uses
+    /// `Self.databaseURL`; tests inject a temp path via `init(databaseURL:)`.
+    let databaseURL: URL
+
     // MARK: State (queue-confined after init)
 
     private let queue = DispatchQueue(label: "metrics.history", qos: .utility)
@@ -81,7 +85,14 @@ final class HistoryStore: @unchecked Sendable {
     /// by a previous run (e.g. quit mid-hour, then relaunched days later).
     private var didCatchUpRecompute = false
 
-    private init() {
+    private convenience init() {
+        self.init(databaseURL: Self.databaseURL)
+    }
+
+    /// Testing seam: a store rooted at an explicit database path. Behavior is
+    /// identical to the shared store; only the file location differs.
+    init(databaseURL: URL) {
+        self.databaseURL = databaseURL
         queue.async { [self] in openDatabase() }
         let timer = DispatchSource.makeTimerSource(queue: queue)
         timer.schedule(deadline: .now() + Self.maintenanceInterval,
@@ -193,7 +204,7 @@ final class HistoryStore: @unchecked Sendable {
 
     /// Size of the database on disk (main file + WAL sidecars), for Settings.
     func databaseSizeBytes() async -> UInt64 {
-        await onQueue { Self.sizeOnDisk() }
+        await onQueue { [self] in sizeOnDisk() }
     }
 
     /// Drops every sample and rollup and shrinks the file back down.
@@ -208,16 +219,17 @@ final class HistoryStore: @unchecked Sendable {
 
     // MARK: - --dump support (CLI only; blocks on the store queue)
 
-    func runMaintenanceSync() {
-        queue.sync { performMaintenance(now: Date()) }
+    /// `now` is injectable so tests can drive the retention clock forward.
+    func runMaintenanceSync(now: Date = Date()) {
+        queue.sync { performMaintenance(now: now) }
     }
 
     func dumpStatsSync() -> (path: String, rawRows: Int, rollupRows: Int, sizeBytes: UInt64) {
         queue.sync { [self] in
-            (Self.databaseURL.path,
+            (databaseURL.path,
              scalarInt("SELECT COUNT(*) FROM samples"),
              scalarInt("SELECT COUNT(*) FROM rollups"),
-             Self.sizeOnDisk())
+             sizeOnDisk())
         }
     }
 
@@ -225,9 +237,9 @@ final class HistoryStore: @unchecked Sendable {
 
     private func openDatabase() {
         try? FileManager.default.createDirectory(
-            at: WidgetSnapshotStore.appSupportDirectory, withIntermediateDirectories: true)
+            at: databaseURL.deletingLastPathComponent(), withIntermediateDirectories: true)
         var handle: OpaquePointer?
-        guard sqlite3_open_v2(Self.databaseURL.path, &handle,
+        guard sqlite3_open_v2(databaseURL.path, &handle,
                               SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_FULLMUTEX,
                               nil) == SQLITE_OK, let handle else {
             sqlite3_close(handle) // per SQLite docs, close even a failed open
@@ -507,7 +519,7 @@ final class HistoryStore: @unchecked Sendable {
         }
     }
 
-    private static func sizeOnDisk() -> UInt64 {
+    private func sizeOnDisk() -> UInt64 {
         let base = databaseURL.path
         return [base, base + "-wal", base + "-shm"].reduce(0) { total, path in
             let attributes = try? FileManager.default.attributesOfItem(atPath: path)
