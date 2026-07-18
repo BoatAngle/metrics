@@ -9,9 +9,74 @@ final class PopoverState {
     var pinned = false
 }
 
+/// Stable menu-bar slots. AppKit persists each autosaved status item's position
+/// in UserDefaults as "NSStatusItem Preferred Position <name>" — the distance
+/// in points from the RIGHT edge of the status area, so larger = further left —
+/// plus a "NSStatusItem Visible <name>" flag. The position default is read when
+/// the autosaveName is assigned, so a slot must be seeded BEFORE the item is
+/// created for it to take effect. Seeding huge descending values (8000, 7998, …)
+/// parks the whole group at the far left of the status area in settings order;
+/// AppKit clamps them to real coordinates on first layout and owns the keys
+/// from there, so a user's ⌘-drag fine-tune persists like any other autosave.
+enum MenuBarPositions {
+    /// Autosave name for a configured instance. The id is a persisted UUID, so
+    /// the name — and thus the saved slot — is stable across launches.
+    static func name(for instanceID: String) -> String { "metrics.\(instanceID)" }
+    /// The Focus/Gaming-mode collapsed icon's fixed slot (#44).
+    static let focusName = "metrics.focus"
+
+    /// Seed for the item at `index` in settings order (index 0 = leftmost).
+    /// Far wider than any real menu bar; descending keeps left→right order.
+    static func seed(at index: Int) -> Double { 8000 - Double(index * 2) }
+
+    private static func positionKey(_ name: String) -> String {
+        "NSStatusItem Preferred Position \(name)"
+    }
+    private static func visibleKey(_ name: String) -> String {
+        "NSStatusItem Visible \(name)"
+    }
+
+    /// The saved slot for a name, if a seed (or AppKit) has recorded one.
+    static func savedPosition(_ name: String) -> Double? {
+        UserDefaults.standard.object(forKey: positionKey(name)) as? Double
+    }
+
+    /// Seeds a far-left slot unless one is already saved — an existing value
+    /// is the user's arrangement and must never be overwritten here.
+    static func seedIfNeeded(_ name: String, index: Int) {
+        guard UserDefaults.standard.object(forKey: positionKey(name)) == nil else { return }
+        UserDefaults.standard.set(seed(at: index), forKey: positionKey(name))
+    }
+
+    /// Overwrites the slot unconditionally — the settings-reorder and "group
+    /// items at the far left" path, which re-anchors the whole group.
+    static func forceSeed(_ name: String, index: Int) {
+        UserDefaults.standard.set(seed(at: index), forKey: positionKey(name))
+    }
+
+    /// Drops both autosave defaults for an instance deleted in settings.
+    static func forget(_ name: String) {
+        UserDefaults.standard.removeObject(forKey: positionKey(name))
+        UserDefaults.standard.removeObject(forKey: visibleKey(name))
+    }
+
+    /// Removes a status item without losing its slot: AppKit deletes the
+    /// preferred-position default when an autosaved item is removed, which
+    /// would shuffle the bar on the next rebuild (Focus-mode collapse/restore).
+    /// Snapshot the value, remove, write it back.
+    @MainActor
+    static func removePreservingSlot(_ item: NSStatusItem, name: String) {
+        let key = positionKey(name)
+        let saved = UserDefaults.standard.object(forKey: key)
+        NSStatusBar.system.removeStatusItem(item)
+        if let saved { UserDefaults.standard.set(saved, forKey: key) }
+    }
+}
+
 /// Creates one NSStatusItem per configured menu bar item (fixed widths, so the
 /// menu bar never shifts as values update), dispatches per-item click actions
-/// (#37), refreshes live tooltips each tick (#40), and owns the dashboard
+/// (#37), refreshes live tooltips each tick (#40), keeps every item in a
+/// stable, far-left autosaved slot (`MenuBarPositions`), and owns the dashboard
 /// popover.
 @MainActor
 final class StatusItemController: NSObject, NSPopoverDelegate {
@@ -49,24 +114,27 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
         super.init()
         rebuildItems()
         observeSettings()
+        observeReseedRequests()
         observeFocusMode()
         observeEngineForTooltips()
     }
 
     // MARK: Items
 
-    private func rebuildItems() {
+    private func rebuildItems(reseed: Bool = false) {
         // Focus/Gaming mode (#44): collapse everything into one compact item.
+        // Removal keeps each item's saved slot so positions restore intact.
         if FocusModeController.shared.active {
             for (id, entry) in items {
-                NSStatusBar.system.removeStatusItem(entry.statusItem)
+                MenuBarPositions.removePreservingSlot(entry.statusItem,
+                                                      name: MenuBarPositions.name(for: id))
                 items[id] = nil
             }
             if focusItem == nil { focusItem = makeFocusItem() }
             return
         }
         if let existing = focusItem {
-            NSStatusBar.system.removeStatusItem(existing)
+            MenuBarPositions.removePreservingSlot(existing, name: MenuBarPositions.focusName)
             focusItem = nil
         }
 
@@ -74,17 +142,32 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
         if wanted.isEmpty { wanted = WidgetInstance.defaults } // never leave the app unreachable
 
         let wantedIDs = Set(wanted.map(\.id))
-        // Drop items that vanished.
+        // Drop items that vanished, along with their saved slots.
         for (id, entry) in items where !wantedIDs.contains(id) {
             NSStatusBar.system.removeStatusItem(entry.statusItem)
+            MenuBarPositions.forget(MenuBarPositions.name(for: id))
             items[id] = nil
         }
-        // Update changed items in place; create new ones (in reverse so a fresh
-        // item lands leftmost, matching the array order).
-        for inst in wanted.reversed() {
+        // Re-anchor: tear down the surviving items and force-seed every slot in
+        // the new settings order, so the on-screen order follows settings again.
+        // (⌘-drag tweaks are deliberately reset — that's the point of the ask.)
+        if reseed {
+            for (id, entry) in items {
+                NSStatusBar.system.removeStatusItem(entry.statusItem)
+                items[id] = nil
+            }
+            for (index, inst) in wanted.enumerated() {
+                MenuBarPositions.forceSeed(MenuBarPositions.name(for: inst.id), index: index)
+            }
+        }
+        // Update changed items in place; create missing ones in settings order
+        // (deterministic), seeding each new slot before creation — AppKit reads
+        // the position default when the autosaveName is assigned, never after.
+        for (index, inst) in wanted.enumerated() {
             if let existing = items[inst.id] {
                 if existing.instance != inst { apply(inst, to: existing) }
             } else {
+                MenuBarPositions.seedIfNeeded(MenuBarPositions.name(for: inst.id), index: index)
                 items[inst.id] = makeItem(for: inst)
             }
         }
@@ -93,7 +176,10 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
 
     private func makeItem(for instance: WidgetInstance) -> Item {
         let statusItem = NSStatusBar.system.statusItem(withLength: MenuBarLayout.width(for: instance))
-        statusItem.autosaveName = "metrics.widget.\(instance.id)"
+        // Tidy up the pre-slot-seeding autosave keys ("metrics.widget.<id>")
+        // from earlier builds; harmless no-op once they're gone.
+        MenuBarPositions.forget("metrics.widget.\(instance.id)")
+        statusItem.autosaveName = MenuBarPositions.name(for: instance.id)
         if let button = statusItem.button {
             button.imagePosition = .imageOnly
             button.image = image(for: instance, appearance: button.effectiveAppearance)
@@ -126,7 +212,11 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
     /// The single compact item shown in Focus/Gaming mode. Clicking it (or
     /// right-clicking for the menu) exits the mode and restores every item (#44).
     private func makeFocusItem() -> NSStatusItem {
+        // Same far-left anchoring as the real items: seed the fixed slot before
+        // creation so the collapsed icon lands (and stays) where the group lives.
+        MenuBarPositions.seedIfNeeded(MenuBarPositions.focusName, index: 0)
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
+        item.autosaveName = MenuBarPositions.focusName
         if let button = item.button {
             button.image = NSImage(systemSymbolName: "moon.zzz.fill",
                                    accessibilityDescription: "Focus mode")
@@ -169,6 +259,16 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
             _ = self?.settings.widgetInstances
         } perform: { [weak self] in
             self?.rebuildItems()
+        }
+    }
+
+    /// Re-anchors the whole group at the far left whenever settings asks for it
+    /// (the reorder arrows in the Menu Bar tab, or its explicit button).
+    private func observeReseedRequests() {
+        observeChanges { [weak self] in
+            _ = self?.settings.menuBarReseedNonce
+        } perform: { [weak self] in
+            self?.rebuildItems(reseed: true)
         }
     }
 

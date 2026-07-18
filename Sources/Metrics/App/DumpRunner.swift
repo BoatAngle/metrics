@@ -325,6 +325,20 @@ enum DumpRunner {
         } else {
             print("           codec round-trip: ENCODE/DECODE FAILED")
         }
+
+        // Stable slots: each configured instance's autosaveName and whether a
+        // position is saved (seeded at item creation, then owned by AppKit).
+        MainActor.assumeIsolated {
+            let configured = SettingsStore.shared.widgetInstances
+            print("           autosave slots (\(configured.count) configured, focus \"\(MenuBarPositions.focusName)\"):")
+            for (index, inst) in configured.enumerated() {
+                let name = MenuBarPositions.name(for: inst.id)
+                let pos = MenuBarPositions.savedPosition(name)
+                    .map { String(format: "saved %.0f", $0) }
+                    ?? "unseeded (will seed \(Int(MenuBarPositions.seed(at: index))))"
+                print("           \(name) [\(inst.kind.title)] \(pos)")
+            }
+        }
     }
 
     /// Session stats (#25), records (#26), weekly summary (#30/#31) and export

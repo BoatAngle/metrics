@@ -863,6 +863,14 @@ private struct MenuBarSettingsTab: View {
                 Text("⌘-drag items in the menu bar to rearrange them, or use the arrows on each item.")
             }
 
+            Section {
+                Button("Group items at the far left") { settings.requestMenuBarReseed() }
+            } header: {
+                Text("Position")
+            } footer: {
+                Text("Tip: hold ⌘ and drag any item to fine-tune; Metrics remembers it.")
+            }
+
             ForEach(Array(settings.widgetInstances.enumerated()), id: \.element.id) { index, inst in
                 itemSection(inst, index: index)
             }

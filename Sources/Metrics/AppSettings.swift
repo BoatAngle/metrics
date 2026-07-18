@@ -146,6 +146,11 @@ final class SettingsStore {
     /// Global reactive-color toggle (#33). Per-item overrides live on the
     /// instance's `reactiveColor`.
     var menuBarReactiveColors: Bool { didSet { save() } }
+    /// Bumped to ask StatusItemController to re-anchor the whole menu-bar group
+    /// at the far left in settings order (the reorder arrows, or the "Group
+    /// items at the far left" button). Session-only, never persisted — the
+    /// positions themselves live in AppKit's own status-item autosave keys.
+    private(set) var menuBarReseedNonce = 0
     var cardOrder: [CardKind] { didSet { save() } }
     var hiddenCards: Set<CardKind> { didSet { save() } }
     var sampleInterval: Double { didSet { save() } }
@@ -279,7 +284,12 @@ final class SettingsStore {
         var arr = widgetInstances
         arr.swapAt(idx, target)
         widgetInstances = arr
+        // The settings order changed — re-anchor the bar so it follows.
+        requestMenuBarReseed()
     }
+
+    /// Requests a far-left re-anchor of every menu bar item, in settings order.
+    func requestMenuBarReseed() { menuBarReseedNonce += 1 }
 
     /// Replaces an item in place (reassigning the whole array so observers fire).
     func updateWidget(_ instance: WidgetInstance) {
