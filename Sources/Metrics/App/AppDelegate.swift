@@ -82,6 +82,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         // Control socket for the metricsctl CLI (Package 9). Best-effort: the
         // app runs fine without it.
         MetricsControlServer.shared.start(source: LiveControlSource())
+        // Once-daily update check (v2.1): first pass ~15 s from now, then a
+        // coarse 6 h re-evaluation. Never blocks or delays launch.
+        UpdateChecker.shared.start()
         // Launching by hand (Finder, Spotlight, `open`) shows the dashboard;
         // a login-item launch stays quietly in the menu bar, and a
         // launch-by-URL lets the URL command decide whether to open a window.

@@ -468,23 +468,79 @@ struct SettingsView: View {
 
     // MARK: - About
 
+    private var updater: UpdateChecker { .shared }
+
     private var aboutTab: some View {
-        VStack(spacing: 12) {
-            Image(systemName: "gauge")
-                .font(.system(size: 52))
-                .foregroundStyle(Color.accentColor)
-            Text("Metrics 1.0.0")
-                .font(.system(size: 15, weight: .semibold))
-            Text("Personal build — every feature free, nothing phones home.")
-                .font(.system(size: 12))
-                .foregroundStyle(.secondary)
-                .multilineTextAlignment(.center)
-            Text("~/Desktop/metrics")
-                .font(.caption)
-                .foregroundStyle(.tertiary)
+        Form {
+            Section {
+                VStack(spacing: 12) {
+                    Image(systemName: "gauge")
+                        .font(.system(size: 52))
+                        .foregroundStyle(Color.accentColor)
+                    Text("Metrics \(updater.currentVersion ?? "(dev build)")")
+                        .font(.system(size: 15, weight: .semibold))
+                    Text("Personal build — every feature free, nothing phones home.")
+                        .font(.system(size: 12))
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
+                    Text("~/Desktop/metrics")
+                        .font(.caption)
+                        .foregroundStyle(.tertiary)
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 12)
+            }
+            updatesSection
         }
-        .padding(24)
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .formStyle(.grouped)
+    }
+
+    // MARK: Updates (v2.1)
+
+    private var updatesSection: some View {
+        Section {
+            Toggle("Check for updates once a day", isOn: updateChecksBinding)
+            LabeledContent("Status") {
+                HStack(spacing: 8) {
+                    Text(updateStatusText)
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.trailing)
+                    if updater.updateAvailable {
+                        Button("View Release") { updater.openReleasePage() }
+                            .controlSize(.small)
+                    }
+                }
+            }
+            Button("Check Now") {
+                Task { await UpdateChecker.shared.checkNow() }
+            }
+            .disabled(updater.checking || updater.currentVersion == nil)
+        } header: {
+            Text("Updates")
+        } footer: {
+            Text("Once a day Metrics fetches the latest release number from GitHub — one anonymous request, and the only network request Metrics ever makes on its own. Nothing about you or your Mac is sent, and you can turn it off entirely.")
+        }
+    }
+
+    private var updateStatusText: String {
+        if updater.checking { return "Checking…" }
+        if updater.updateAvailable, let latest = updater.latestKnownVersion {
+            return "Version \(latest) is available"
+        }
+        guard let current = updater.currentVersion else {
+            return "Version unknown (running outside the app bundle)"
+        }
+        if let last = updater.lastCheckDate {
+            return "You're up to date — \(current)\nLast checked \(Fmt.date(last))"
+        }
+        return "You're up to date — \(current)"
+    }
+
+    private var updateChecksBinding: Binding<Bool> {
+        Binding(
+            get: { settings.updateChecksEnabled },
+            set: { settings.updateChecksEnabled = $0 }
+        )
     }
 }
 

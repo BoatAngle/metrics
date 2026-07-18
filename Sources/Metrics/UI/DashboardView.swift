@@ -154,6 +154,33 @@ private extension View {
     }
 }
 
+/// One-line update banner (v2.1), shared by the popover and the dashboard
+/// window. Renders nothing until `UpdateChecker` knows a newer release, so the
+/// dashboards are pixel-identical to before on up-to-date installs; the only
+/// re-render is the once-a-day state flip (no animation, no timers). It sits
+/// above the scrolling card stack — outside every card's `.onDrag` region —
+/// so a plain SwiftUI button receives clicks fine.
+struct UpdateBanner: View {
+    var body: some View {
+        let updater = UpdateChecker.shared
+        if updater.updateAvailable, let version = updater.latestKnownVersion {
+            HStack(spacing: 8) {
+                Image(systemName: "arrow.down.circle.fill")
+                    .font(.system(size: 12))
+                    .foregroundStyle(Color.accentColor)
+                Text("Metrics \(version) is available")
+                    .font(.system(size: 12, weight: .medium))
+                Spacer()
+                Button("View") { updater.openReleasePage() }
+                    .controlSize(.small)
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 6)
+            .background(Color.accentColor.opacity(0.12))
+        }
+    }
+}
+
 /// The popover content: header + scrollable stack of metric cards in the
 /// user's chosen order.
 struct DashboardView: View {
@@ -176,6 +203,7 @@ struct DashboardView: View {
         VStack(spacing: 0) {
             header
             Divider()
+            UpdateBanner()
             ScrollView {
                 VStack(spacing: 10) {
                     ForEach(settings.visibleCards) { kind in
@@ -255,6 +283,7 @@ struct DashboardWindowView: View {
             // edge touches the content view's top bleeds its scrolled rows
             // into the titlebar. One point of breathing room prevents it.
             Color.clear.frame(height: 1)
+            UpdateBanner()
             ScrollViewReader { proxy in
                 ScrollView {
                     VStack(alignment: .leading, spacing: 16) {

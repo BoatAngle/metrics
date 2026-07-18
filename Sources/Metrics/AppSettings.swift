@@ -129,6 +129,14 @@ private struct PersistedSettings: Codable {
     var focusAutoEnabled: Bool? = nil
     var focusTrigger: String? = nil
     var focusTriggerBundleID: String? = nil
+    /// In-app update check (v2.1). A once-daily anonymous GET to the GitHub
+    /// releases API — the only request Metrics ever makes on its own — plus the
+    /// last successful result so the banner survives relaunch. All optional so
+    /// every prior settings version still decodes.
+    var updateChecksEnabled: Bool? = nil
+    var lastUpdateCheckDate: Date? = nil
+    var lastKnownLatestVersion: String? = nil
+    var lastKnownReleaseURL: String? = nil
 }
 
 // MARK: - Store
@@ -189,6 +197,12 @@ final class SettingsStore {
     var focusTrigger: FocusTrigger { didSet { save() } }
     /// The app bundle id watched by the `.frontmostApp` trigger (#44).
     var focusTriggerBundleID: String? { didSet { save() } }
+    /// Once-daily update check (v2.1): master switch, last successful check,
+    /// and the newest release GitHub reported (version + page URL).
+    var updateChecksEnabled: Bool { didSet { save() } }
+    var lastUpdateCheckDate: Date? { didSet { save() } }
+    var lastKnownLatestVersion: String? { didSet { save() } }
+    var lastKnownReleaseURL: String? { didSet { save() } }
 
     /// Dashboard cards in display order with hidden ones filtered out.
     var visibleCards: [CardKind] {
@@ -362,6 +376,10 @@ final class SettingsStore {
         focusAutoEnabled = p.focusAutoEnabled ?? false
         focusTrigger = p.focusTrigger.flatMap { FocusTrigger(rawValue: $0) } ?? .fullScreen
         focusTriggerBundleID = p.focusTriggerBundleID
+        updateChecksEnabled = p.updateChecksEnabled ?? true
+        lastUpdateCheckDate = p.lastUpdateCheckDate
+        lastKnownLatestVersion = p.lastKnownLatestVersion
+        lastKnownReleaseURL = p.lastKnownReleaseURL
         loaded = true
     }
 
@@ -403,7 +421,11 @@ final class SettingsStore {
                                   layoutProfiles: layoutProfiles,
                                   focusAutoEnabled: focusAutoEnabled,
                                   focusTrigger: focusTrigger.rawValue,
-                                  focusTriggerBundleID: focusTriggerBundleID)
+                                  focusTriggerBundleID: focusTriggerBundleID,
+                                  updateChecksEnabled: updateChecksEnabled,
+                                  lastUpdateCheckDate: lastUpdateCheckDate,
+                                  lastKnownLatestVersion: lastKnownLatestVersion,
+                                  lastKnownReleaseURL: lastKnownReleaseURL)
         if let data = try? JSONEncoder().encode(p) {
             UserDefaults.standard.set(data, forKey: Self.key)
         }

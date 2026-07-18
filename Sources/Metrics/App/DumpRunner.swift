@@ -191,8 +191,37 @@ enum DumpRunner {
         dumpMenuBar(cpu: c, gpu: g, memory: m, network: n, sensors: s, battery: b)
         dumpPolish()
         dumpWidgets()
+        dumpUpdates()
 
         print("\nDone.")
+    }
+
+    /// Update check (v2.1). Headless: no network, no timers — reports the
+    /// persisted state and exercises the pure dotted-version compare. Run as a
+    /// bare executable there's no Info.plist, so the current version prints as
+    /// unknown and no update is ever reported.
+    private static func dumpUpdates() {
+        MainActor.assumeIsolated {
+            let u = UpdateChecker.shared
+            let s = SettingsStore.shared
+            print("\n[Updates] daily check \(s.updateChecksEnabled ? "enabled" : "disabled")"
+                + "  current \(u.currentVersion ?? "unknown (no bundle)")")
+            print("          last successful check \(s.lastUpdateCheckDate.map(Fmt.date) ?? "never")"
+                + "  latest known \(s.lastKnownLatestVersion ?? "–")"
+                + "  update available \(u.updateAvailable)")
+            // Version-compare edge cases: newer, equal, older remote, short
+            // form, and a malformed tag (which must never report an update).
+            let cases: [(remote: String, current: String, expect: Bool)] = [
+                ("v2.1.1", "2.1.0", true),
+                ("2.1.0", "2.1.0", false),
+                ("v2.0.2", "2.1.0", false),
+                ("2.1", "2.1.0", false),
+                ("2.10.0", "2.9.9", true),
+                ("nightly", "2.1.0", false),
+            ]
+            let allOK = cases.allSatisfy { UpdateChecker.isNewer(remote: $0.remote, than: $0.current) == $0.expect }
+            print("          version compare: \(allOK ? "ok" : "MISMATCH") (\(cases.count) case(s))")
+        }
     }
 
     /// Desktop widget upgrades + Focus/Gaming mode (Package 13, #41–#44). GUI

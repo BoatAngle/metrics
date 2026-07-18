@@ -367,6 +367,13 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
         let settingsItem = NSMenuItem(title: "Settings…", action: #selector(openSettingsFromMenu), keyEquivalent: ",")
         settingsItem.target = self
         menu.addItem(settingsItem)
+        // Manual update check (v2.1): opens the release page if newer, else a
+        // plain "you're up to date" alert.
+        let updateItem = NSMenuItem(title: "Check for Updates…",
+                                    action: #selector(checkForUpdatesFromMenu),
+                                    keyEquivalent: "")
+        updateItem.target = self
+        menu.addItem(updateItem)
         if !settings.desktopWidgets.isEmpty {
             let arrangeItem = NSMenuItem(title: "Arrange Desktop Widgets",
                                          action: #selector(toggleArrangeWidgets),
@@ -393,6 +400,10 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
 
     @objc private func openDashboardFromMenu() {
         openDashboardAction()
+    }
+
+    @objc private func checkForUpdatesFromMenu() {
+        Task { await UpdateChecker.shared.checkNowInteractively() }
     }
 
     @objc private func toggleArrangeWidgets() {
