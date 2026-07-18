@@ -4,7 +4,7 @@ struct SensorsCard: View {
     @Environment(MetricsEngine.self) private var engine
     @Environment(SettingsStore.self) private var settings
 
-    private enum RecordScope: String, CaseIterable, Identifiable {
+    enum RecordScope: String, CaseIterable, Identifiable {
         case today, allTime
         var id: String { rawValue }
         var title: String { self == .today ? "Today" : "All-time" }
@@ -12,9 +12,9 @@ struct SensorsCard: View {
 
     // Plain State (not @State): the macro form needs the SwiftUIMacros plugin,
     // which the Command Line Tools toolchain doesn't ship.
-    private var recordsExpanded = State(initialValue: false)
-    private var recordScope = State(initialValue: RecordScope.allTime)
-    private var confirmingReset = State(initialValue: false)
+    var recordsExpanded = State(initialValue: false)
+    var recordScope = State(initialValue: RecordScope.allTime)
+    var confirmingReset = State(initialValue: false)
 
     private let gridColumns = [GridItem(.flexible()), GridItem(.flexible())]
 

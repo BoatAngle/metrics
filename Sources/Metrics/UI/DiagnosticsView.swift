@@ -10,8 +10,8 @@ struct DiagnosticsView: View {
 
     // Plain State (not @State): the macro form needs the SwiftUIMacros plugin,
     // which the Command Line Tools toolchain doesn't ship.
-    private var report = State(initialValue: DiagnosticReport?.none)
-    private var running = State(initialValue: false)
+    var report = State(initialValue: DiagnosticReport?.none)
+    var running = State(initialValue: false)
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {

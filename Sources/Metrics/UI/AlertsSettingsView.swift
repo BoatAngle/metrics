@@ -11,9 +11,9 @@ struct AlertsSettingsTab: View {
 
     // Plain State (not @State): the macro form needs the SwiftUIMacros plugin,
     // which the Command Line Tools toolchain doesn't ship.
-    private var draftRule = State(initialValue: AlertRule.new())
-    private var draftIsNew = State(initialValue: true)
-    private var showingEditor = State(initialValue: false)
+    var draftRule = State(initialValue: AlertRule.new())
+    var draftIsNew = State(initialValue: true)
+    var showingEditor = State(initialValue: false)
 
     private var alerts: AlertEngine { .shared }
 

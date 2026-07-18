@@ -7,7 +7,7 @@ struct FansCard: View {
     // Plain State (not @State): the macro form needs the SwiftUIMacros plugin,
     // which the Command Line Tools toolchain doesn't ship. SwiftUI picks up
     // stored DynamicProperty values by reflection, so this behaves the same.
-    private var sliderRPM = State(initialValue: [Int: Double]())
+    var sliderRPM = State(initialValue: [Int: Double]())
 
     private var fans: FanControl { .shared }
 

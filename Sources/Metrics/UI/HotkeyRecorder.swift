@@ -11,8 +11,8 @@ struct HotkeyRecorder: View {
 
     // Plain State (not @State): the macro form needs the SwiftUIMacros plugin,
     // which the Command Line Tools toolchain doesn't ship.
-    private var recording = State(initialValue: false)
-    private var monitor = State<Any?>(initialValue: nil)
+    var recording = State(initialValue: false)
+    var monitor = State<Any?>(initialValue: nil)
 
     var body: some View {
         HStack(spacing: 8) {

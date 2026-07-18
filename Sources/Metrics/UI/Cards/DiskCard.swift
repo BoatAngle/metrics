@@ -8,11 +8,11 @@ struct DiskCard: View {
     // Plain State (not @State): the macro form needs the SwiftUIMacros plugin,
     // which the Command Line Tools toolchain doesn't ship. SwiftUI picks up
     // stored DynamicProperty values by reflection, so this behaves the same.
-    private var ejecting = State(initialValue: Set<String>())
-    private var ejectError = State(initialValue: [String: String]())
+    var ejecting = State(initialValue: Set<String>())
+    var ejectError = State(initialValue: [String: String]())
     /// Per-volume free-space forecasts, keyed by volume path. Loaded off-main
     /// from HistoryStore and refreshed slowly (free space moves over days).
-    private var forecasts = State(initialValue: [String: DiskForecast]())
+    var forecasts = State(initialValue: [String: DiskForecast]())
 
     var body: some View {
         let root = engine.disk.root

@@ -8,10 +8,10 @@ struct NetworkCard: View {
     // Plain State (not @State): the macro form needs the SwiftUIMacros plugin,
     // which the Command Line Tools toolchain doesn't ship. SwiftUI picks up
     // stored DynamicProperty values by reflection, so this behaves the same.
-    private var publicIP = State<String?>(initialValue: nil)
-    private var fetchingIP = State(initialValue: false)
-    private var fetchFailed = State(initialValue: false)
-    private var outagesExpanded = State(initialValue: false)
+    var publicIP = State<String?>(initialValue: nil)
+    var fetchingIP = State(initialValue: false)
+    var fetchFailed = State(initialValue: false)
+    var outagesExpanded = State(initialValue: false)
 
     var body: some View {
         let net = engine.network

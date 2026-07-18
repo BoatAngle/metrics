@@ -78,7 +78,7 @@ struct HistoryChartView: View {
 
     // Plain State (not @State): the macro form needs the SwiftUIMacros plugin,
     // which the Command Line Tools toolchain doesn't ship.
-    private var points = State(initialValue: [HistoryPoint]())
+    var points = State(initialValue: [HistoryPoint]())
 
     var body: some View {
         HistoryChart(points: points.wrappedValue,
@@ -113,7 +113,7 @@ struct HistoryChart: View {
 
     // Plain State (not @State): the macro form needs the SwiftUIMacros plugin,
     // which the Command Line Tools toolchain doesn't ship.
-    private var hover = State<CGPoint?>(initialValue: nil)
+    var hover = State<CGPoint?>(initialValue: nil)
 
     private static let axisHeight: CGFloat = 12
 

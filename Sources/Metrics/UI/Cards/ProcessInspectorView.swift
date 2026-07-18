@@ -10,7 +10,7 @@ struct ProcessInspectorView: View {
 
     // Plain State (not @State): the macro form needs the SwiftUIMacros plugin,
     // which the Command Line Tools toolchain doesn't ship.
-    private var details = State(initialValue: ProcessDetails?.none)
+    var details = State(initialValue: ProcessDetails?.none)
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {

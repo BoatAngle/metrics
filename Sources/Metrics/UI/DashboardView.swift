@@ -197,7 +197,7 @@ struct DashboardView: View {
     // Plain State (not @State): the macro form needs the SwiftUIMacros plugin,
     // which the Command Line Tools toolchain doesn't ship. SwiftUI picks up
     // stored DynamicProperty values by reflection, so this behaves the same.
-    private var draggingCard = State(initialValue: CardKind?.none)
+    var draggingCard = State(initialValue: CardKind?.none)
 
     var body: some View {
         VStack(spacing: 0) {
@@ -273,9 +273,9 @@ struct DashboardWindowView: View {
     // Plain State (not @State): the macro form needs the SwiftUIMacros plugin,
     // which the Command Line Tools toolchain doesn't ship. SwiftUI picks up
     // stored DynamicProperty values by reflection, so this behaves the same.
-    private var draggingCard = State(initialValue: CardKind?.none)
+    var draggingCard = State(initialValue: CardKind?.none)
     /// The card currently pulsing from a deep-link/menu-bar focus (#37).
-    private var highlightedCard = State(initialValue: CardKind?.none)
+    var highlightedCard = State(initialValue: CardKind?.none)
 
     var body: some View {
         VStack(spacing: 0) {

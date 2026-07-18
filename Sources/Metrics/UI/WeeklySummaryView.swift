@@ -6,7 +6,7 @@ struct WeeklySummaryView: View {
     @Environment(MetricsEngine.self) private var engine
     @Environment(SettingsStore.self) private var settings
 
-    private enum Span: Int, CaseIterable, Identifiable {
+    enum Span: Int, CaseIterable, Identifiable {
         case week = 7, month = 30
         var id: Int { rawValue }
         var title: String { self == .week ? "7 days" : "30 days" }
@@ -14,8 +14,8 @@ struct WeeklySummaryView: View {
 
     // Plain State (not @State): the macro form needs the SwiftUIMacros plugin,
     // which the Command Line Tools toolchain doesn't ship.
-    private var span = State(initialValue: Span.week)
-    private var summary = State(initialValue: WeeklySummary.empty)
+    var span = State(initialValue: Span.week)
+    var summary = State(initialValue: WeeklySummary.empty)
 
     var body: some View {
         VStack(spacing: 0) {

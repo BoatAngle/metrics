@@ -4,7 +4,7 @@ struct DeviceCard: View {
     @Environment(MetricsEngine.self) private var engine
     @Environment(SettingsStore.self) private var settings
 
-    private enum Scope: String, CaseIterable, Identifiable {
+    enum Scope: String, CaseIterable, Identifiable {
         case boot, wake
         var id: String { rawValue }
         var title: String { self == .boot ? "Since boot" : "Since wake" }
@@ -13,10 +13,10 @@ struct DeviceCard: View {
     // Plain State (not @State): the macro form needs the SwiftUIMacros plugin,
     // which the Command Line Tools toolchain doesn't ship. SwiftUI picks up
     // stored DynamicProperty values by reflection, so this behaves the same.
-    private var scope = State(initialValue: Scope.boot)
-    private var bootStats = State(initialValue: SessionStats?.none)
-    private var wakeStats = State(initialValue: SessionStats?.none)
-    private var showingDiagnostics = State(initialValue: false)
+    var scope = State(initialValue: Scope.boot)
+    var bootStats = State(initialValue: SessionStats?.none)
+    var wakeStats = State(initialValue: SessionStats?.none)
+    var showingDiagnostics = State(initialValue: false)
 
     var body: some View {
         CardContainer(title: "Device") {

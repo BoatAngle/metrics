@@ -8,10 +8,10 @@ struct BatteryCard: View {
     // Plain State (not @State): the macro form needs the SwiftUIMacros plugin,
     // which the Command Line Tools toolchain doesn't ship. SwiftUI picks up
     // stored DynamicProperty values by reflection, so this behaves the same.
-    private var healthExpanded = State(initialValue: false)
+    var healthExpanded = State(initialValue: false)
     /// Daily health-% series (months scale), loaded off-main while the Health
     /// history section is open.
-    private var healthPoints = State(initialValue: [HistoryPoint]())
+    var healthPoints = State(initialValue: [HistoryPoint]())
 
     private var charge: BatteryChargeControl { .shared }
 

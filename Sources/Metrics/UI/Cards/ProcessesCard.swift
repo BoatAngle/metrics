@@ -9,9 +9,9 @@ struct ProcessesCard: View {
     // Plain State (not @State): the macro form needs the SwiftUIMacros plugin,
     // which the Command Line Tools toolchain doesn't ship. SwiftUI picks up
     // stored DynamicProperty values by reflection, so this behaves the same.
-    private var hoveredPID = State(initialValue: Int32?.none)
-    private var confirmKillPID = State(initialValue: Int32?.none)
-    private var iconCache = State(initialValue: ProcessIconCache())
+    var hoveredPID = State(initialValue: Int32?.none)
+    var confirmKillPID = State(initialValue: Int32?.none)
+    var iconCache = State(initialValue: ProcessIconCache())
 
     private static let rowCount = 6
 

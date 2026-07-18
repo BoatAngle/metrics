@@ -213,7 +213,7 @@ struct BarHistogram: View {
 
     // Plain State (not @State): the macro form needs the SwiftUIMacros plugin,
     // which the Command Line Tools toolchain doesn't ship.
-    private var hover = State<CGPoint?>(initialValue: nil)
+    var hover = State<CGPoint?>(initialValue: nil)
 
     var body: some View {
         Canvas { ctx, size in
@@ -263,7 +263,7 @@ struct Sparkline: View {
 
     // Plain State (not @State): the macro form needs the SwiftUIMacros plugin,
     // which the Command Line Tools toolchain doesn't ship.
-    private var hover = State<CGPoint?>(initialValue: nil)
+    var hover = State<CGPoint?>(initialValue: nil)
 
     var body: some View {
         Canvas { ctx, size in
@@ -349,7 +349,7 @@ struct CopyableStatRow: View {
 
     // Plain State (not @State): the macro form needs the SwiftUIMacros plugin,
     // which the Command Line Tools toolchain doesn't ship.
-    private var copied = State(initialValue: false)
+    var copied = State(initialValue: false)
 
     var body: some View {
         HStack(spacing: 6) {

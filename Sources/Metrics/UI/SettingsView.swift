@@ -10,7 +10,7 @@ struct SettingsView: View {
     // Plain State (not @State): the macro form needs the SwiftUIMacros plugin,
     // which the Command Line Tools toolchain doesn't ship.
     /// The name being typed for a new layout profile (#43).
-    private var newProfileName = State(initialValue: "")
+    var newProfileName = State(initialValue: "")
 
     var body: some View {
         TabView {
@@ -555,17 +555,17 @@ private struct DataSettingsTab: View {
     // Plain State (not @State): the macro form needs the SwiftUIMacros plugin,
     // which the Command Line Tools toolchain doesn't ship. SwiftUI picks up
     // stored DynamicProperty values by reflection, so this behaves the same.
-    private var dbSizeBytes = State(initialValue: UInt64?.none)
-    private var confirmingDelete = State(initialValue: false)
-    private var deleting = State(initialValue: false)
+    var dbSizeBytes = State(initialValue: UInt64?.none)
+    var confirmingDelete = State(initialValue: false)
+    var deleting = State(initialValue: false)
 
-    private var availableMetrics = State(initialValue: [String]())
-    private var selectedMetrics = State(initialValue: Set<String>())
-    private var exportRange = State(initialValue: HistoryExport.Range.week)
-    private var exportFormat = State(initialValue: HistoryExport.Format.csv)
-    private var exporting = State(initialValue: false)
-    private var exportMessage = State(initialValue: String?.none)
-    private var showingDiagnostics = State(initialValue: false)
+    var availableMetrics = State(initialValue: [String]())
+    var selectedMetrics = State(initialValue: Set<String>())
+    var exportRange = State(initialValue: HistoryExport.Range.week)
+    var exportFormat = State(initialValue: HistoryExport.Format.csv)
+    var exporting = State(initialValue: false)
+    var exportMessage = State(initialValue: String?.none)
+    var showingDiagnostics = State(initialValue: false)
 
     var body: some View {
         Form {
@@ -738,7 +738,7 @@ private struct FansSettingsTab: View {
     // Plain State (not @State): the macro form needs the SwiftUIMacros plugin,
     // which the Command Line Tools toolchain doesn't ship. SwiftUI picks up
     // stored DynamicProperty values by reflection, so this behaves the same.
-    private var sliderRPM = State(initialValue: [Int: Double]())
+    var sliderRPM = State(initialValue: [Int: Double]())
 
     private var fans: FanControl { .shared }
 
